@@ -12,6 +12,10 @@ param(
     [switch]$NoInstaller
 )
 $ErrorActionPreference = "Stop"
+# Ukrainian messages: make Python and the console use UTF-8 instead of the legacy code page (e.g. cp1252).
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
