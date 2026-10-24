@@ -1,0 +1,2 @@
+# Tools for building the installable app (scripts/build_macos.sh, scripts/build_windows.ps1)
+pyinstaller==6.22.3

@@ -1,0 +1,71 @@
+# Builds the Windows installer and the macOS .dmg on GitHub's machines.
+# Start it by hand (Actions → "Build installers" → Run workflow) or by pushing a tag like v1.0.0.
+# The installers appear as downloadable artifacts of the run (and are attached to the release for tags).
+name: Build installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Cache speech model
+        uses: actions/cache@v4
+        with:
+          path: models/supertonic-3
+          key: supertonic-3-v1
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup --no-progress -y }
+      - name: Build
+        shell: pwsh
+        run: scripts\build_windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/*-Windows-Setup.exe
+          compression-level: 0
+
+  macos:
+    runs-on: macos-14  # Apple Silicon
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Cache speech model
+        uses: actions/cache@v4
+        with:
+          path: models/supertonic-3
+          key: supertonic-3-v1
+      - name: Build
+        run: PYTHON=python scripts/build_macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: dist/*.dmg
+          compression-level: 0
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: installers/*

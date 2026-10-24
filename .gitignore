@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+models/
+data/
+scratch/
+*.part
+*.part.wav
+/Local Audiobook Reader.app/
+.DS_Store
+dist/
+build/
