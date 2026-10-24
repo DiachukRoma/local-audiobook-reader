@@ -22,7 +22,8 @@ Set-Location $Root
 # Runs a program and stops the build if it fails. A plain function (no param block), so arguments
 # such as "-m" are passed through to the program instead of being parsed by PowerShell.
 function Invoke-Checked {
-    $exe, $rest = $args
+    $exe = $args[0]
+    $rest = @($args | Select-Object -Skip 1)  # always an array, even for a single argument
     & $exe @rest
     if ($LASTEXITCODE -ne 0) { throw "Команда завершилася з помилкою ($LASTEXITCODE): $exe $rest" }
 }
