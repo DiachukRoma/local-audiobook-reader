@@ -526,6 +526,7 @@ class MainWindow(QMainWindow):
         self._offer_ocr(doc.path, len(doc.scan_pages), all_pages_option=True)
 
     def _document_failed(self, path: Path, exc: Exception) -> None:
+        log.warning("Document failed to open (%s): %s: %s", path.suffix, type(exc).__name__, exc)
         self._loading = False
         self.unsetCursor()
         self.status_label.setText("Не вдалося відкрити документ")
@@ -538,6 +539,7 @@ class MainWindow(QMainWindow):
 
     def _document_loaded(self, result) -> None:
         doc, fingerprint, progress, ocr_mode = result
+        log.info("Document opened: %s, %d paragraphs", doc.format, len(doc.paragraphs))
         self._loading = False
         self.ocr_mode = ocr_mode
         self.unsetCursor()

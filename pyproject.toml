@@ -1,6 +1,6 @@
 [project]
 name = "local-audiobook-reader"
-version = "1.0.0"
+version = "1.0.1"
 description = "Offline Ukrainian/Russian audiobook reader for macOS (Supertonic 3 TTS)"
 readme = "README.md"
 requires-python = ">=3.11"

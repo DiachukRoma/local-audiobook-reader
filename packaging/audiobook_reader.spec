@@ -20,6 +20,8 @@ ICON = os.environ.get("APP_ICON") or None
 
 datas = [(str(ROOT / "assets" / "icon.png"), "assets")]
 datas += collect_data_files("supertonic")
+# PyMuPDF loads its page-layout models (pymupdf/layout) from files at runtime; skip its C headers/static libs.
+datas += collect_data_files("pymupdf", excludes=["mupdf-devel/**"])
 if os.environ.get("BUNDLE_MODEL", "1") != "0":
     if not (MODEL_DIR / "onnx").is_dir():
         raise SystemExit(f"Speech model not found in {MODEL_DIR}; run scripts/download_model.py or set BUNDLE_MODEL=0")
@@ -29,6 +31,7 @@ if os.environ.get("BUNDLE_MODEL", "1") != "0":
 
 # num2words picks its language module by name at runtime.
 hiddenimports = collect_submodules("num2words")
+hiddenimports += collect_submodules("pymupdf")  # includes optional extension modules such as pymupdf._tgif
 if sys.platform == "darwin":
     hiddenimports += ["Foundation", "objc", "Vision"]  # Apple Vision OCR
 
