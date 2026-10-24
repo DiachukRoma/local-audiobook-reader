@@ -101,6 +101,14 @@ def load_pdf(path: Path, page_range: tuple[int, int] | None = None, ocr=None, oc
             ocr_pages = len(todo)
             scan_pages = []
 
+        # Pages outside the range are read too (text layer only, no OCR) so that paragraph numbers,
+        # header/footer detection and a paragraph running into the range match the whole book.
+        all_pages = pages
+        if page_range:
+            before = [(n, _page_blocks(pdf.load_page(n - 1))) for n in range(1, first)]
+            after = [(n, _page_blocks(pdf.load_page(n - 1))) for n in range(last + 1, page_count + 1)]
+            all_pages = before + pages + after
+
         toc = pdf.get_toc(simple=True)
         metadata_title = (pdf.metadata or {}).get("title", "").strip()
 
@@ -109,35 +117,10 @@ def load_pdf(path: Path, page_range: tuple[int, int] | None = None, ocr=None, oc
             "Цей PDF складається зі сканованих зображень і не містить текстового шару. "
             "Для читання потрібне розпізнавання тексту (OCR).", pages=len(scan_pages))
 
-    # Running headers/footers: texts in the margin zones repeated on many pages.
-    margin_counts: Counter[str] = Counter()
-    for _, blocks in pages:
-        seen = {_signature(t) for y0, y1, t in blocks if y1 <= _MARGIN or y0 >= 1 - _MARGIN}
-        margin_counts.update(seen)
-    threshold = max(3, int(len(pages) * 0.3))
-    repeated = {sig for sig, count in margin_counts.items() if count >= threshold}
-
-    paragraphs: list[Paragraph] = []
-    for number, blocks in pages:
-        first_kept = True
-        for y0, y1, raw in blocks:
-            in_margin = y1 <= _MARGIN or y0 >= 1 - _MARGIN
-            if in_margin and (_signature(raw) in repeated or _PAGE_NUMBER.match(raw)):
-                continue
-            text = normalize_text(raw)
-            if not is_readable(text):
-                continue
-            # The first kept block of a page may continue the last paragraph of the previous page.
-            is_first, first_kept = first_kept, False
-            if (is_first and paragraphs and paragraphs[-1].page == number - 1
-                    and _should_join(paragraphs[-1].text, text)):
-                prev = paragraphs[-1]
-                joined = re.sub(r"(\w)-$", r"\1", prev.text)
-                sep = "" if joined != prev.text else " "
-                paragraphs[-1] = Paragraph(joined + sep + text, prev.section, prev.page)
-                continue
-            paragraphs.append(Paragraph(text, 0, number))
-
+    book, last_pages = _build_paragraphs(all_pages)
+    # Paragraphs of the range, including one that starts on an earlier page and runs into it.
+    selected = [i for i, para in enumerate(book) if last_pages[i] >= first and (para.page or 0) <= last]
+    paragraphs = [book[i] for i in selected]
     if not paragraphs:
         raise DocumentError("У вибраному діапазоні сторінок немає тексту.")
 
@@ -161,7 +144,45 @@ def load_pdf(path: Path, page_range: tuple[int, int] | None = None, ocr=None, oc
         page_range=(first, last) if page_range else None,
         scan_pages=scan_pages,
         ocr_pages=ocr_pages,
+        paragraph_offset=selected[0],
+        book_paragraph_count=len(book),
     )
+
+
+def _build_paragraphs(pages: list[tuple[int, list[tuple[float, float, str]]]]) -> tuple[list[Paragraph], list[int]]:
+    """Turn page blocks into paragraphs; also return the last page each paragraph reaches."""
+    # Running headers/footers: texts in the margin zones repeated on many pages.
+    margin_counts: Counter[str] = Counter()
+    for _, blocks in pages:
+        seen = {_signature(t) for y0, y1, t in blocks if y1 <= _MARGIN or y0 >= 1 - _MARGIN}
+        margin_counts.update(seen)
+    threshold = max(3, int(len(pages) * 0.3))
+    repeated = {sig for sig, count in margin_counts.items() if count >= threshold}
+
+    paragraphs: list[Paragraph] = []
+    last_pages: list[int] = []
+    for number, blocks in pages:
+        first_kept = True
+        for y0, y1, raw in blocks:
+            in_margin = y1 <= _MARGIN or y0 >= 1 - _MARGIN
+            if in_margin and (_signature(raw) in repeated or _PAGE_NUMBER.match(raw)):
+                continue
+            text = normalize_text(raw)
+            if not is_readable(text):
+                continue
+            # The first kept block of a page may continue the last paragraph of the previous page.
+            is_first, first_kept = first_kept, False
+            if (is_first and paragraphs and paragraphs[-1].page == number - 1
+                    and _should_join(paragraphs[-1].text, text)):
+                prev = paragraphs[-1]
+                joined = re.sub(r"(\w)-$", r"\1", prev.text)
+                sep = "" if joined != prev.text else " "
+                paragraphs[-1] = Paragraph(joined + sep + text, prev.section, prev.page)
+                last_pages[-1] = number
+                continue
+            paragraphs.append(Paragraph(text, 0, number))
+            last_pages.append(number)
+    return paragraphs, last_pages
 
 
 def _sections_from_toc(toc: list, paragraphs: list[Paragraph]) -> list[Section]:

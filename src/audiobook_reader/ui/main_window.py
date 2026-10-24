@@ -550,7 +550,7 @@ class MainWindow(QMainWindow):
 
         self.title_label.setText(doc.title)
         lang_name = LANG_LABELS.get(doc.language or "", "не визначено")
-        details = [doc.format.upper(), f"{len(doc.paragraphs)} абзаців", f"мова тексту: {lang_name}"]
+        details = [doc.format.upper(), f"{doc.total_paragraphs} абзаців", f"мова тексту: {lang_name}"]
         if doc.page_count:
             details.append(f"{doc.page_count} стор.")
         self.subtitle_label.setText(" · ".join(details))
@@ -584,7 +584,7 @@ class MainWindow(QMainWindow):
         self._apply_voice_settings()
         self.controller.set_document(doc, paragraph, segment)
         self._last_saved = (paragraph, segment, time.time())
-        resumed = f" · продовжуємо з абзацу {paragraph + 1}" if paragraph else ""
+        resumed = f" · продовжуємо з абзацу {doc.paragraph_number(paragraph)}" if paragraph else ""
         recognized = f" · розпізнано OCR: {doc.ocr_pages} стор." if doc.ocr_pages else ""
         self.status_label.setText(f"Документ відкрито{recognized}{resumed}")
         self._refresh_controls()
@@ -706,9 +706,9 @@ class MainWindow(QMainWindow):
         self.paragraph_view.highlight(paragraph, follow=True)
         if not self.progress_slider.isSliderDown():
             self.progress_slider.setValue(paragraph)
-        total = len(doc.paragraphs)
-        percent = 100.0 * (paragraph + 1) / total
-        parts = [f"Абзац {paragraph + 1} з {total} · {percent:.1f}%"]
+        number, total = doc.paragraph_number(paragraph), doc.total_paragraphs
+        percent = 100.0 * number / total
+        parts = [f"Абзац {number} з {total} · {percent:.1f}%"]
         para = doc.paragraphs[paragraph]
         if para.page:
             parts.append(f"стор. {para.page}")

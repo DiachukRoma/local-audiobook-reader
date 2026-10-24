@@ -43,10 +43,22 @@ class Document:
     language: str | None = None
     scan_pages: list[int] = field(default_factory=list)  # image-only pages left unrecognized
     ocr_pages: int = 0  # pages whose text came from OCR
+    # With a PDF page range only part of the book is loaded; these give book-wide paragraph numbers.
+    paragraph_offset: int = 0  # paragraphs of the book before the first loaded one
+    book_paragraph_count: int | None = None
 
     def __post_init__(self) -> None:
         if not self.sections:
             self.sections = [Section(self.title, 0)]
+
+    @property
+    def total_paragraphs(self) -> int:
+        """Number of paragraphs in the whole book (not only the loaded page range)."""
+        return self.book_paragraph_count or len(self.paragraphs)
+
+    def paragraph_number(self, index: int) -> int:
+        """1-based number of a loaded paragraph within the whole book."""
+        return self.paragraph_offset + index + 1
 
     def section_of(self, paragraph_index: int) -> int:
         if not self.paragraphs:

@@ -49,7 +49,7 @@ class ParagraphModel(QAbstractListModel):
             return font
         if role == Qt.ToolTipRole:
             page = self._doc.paragraphs[row].page
-            return f"Абзац {row + 1}" + (f", сторінка {page}" if page else "") + " — подвійне клацання, щоб читати звідси"
+            return f"Абзац {self._doc.paragraph_number(row)}" + (f", сторінка {page}" if page else "") + " — подвійне клацання, щоб читати звідси"
         return None
 
 

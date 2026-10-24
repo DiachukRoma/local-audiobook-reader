@@ -142,6 +142,30 @@ def test_pdf_page_range(tmp_path):
     assert [p.text for p in doc.paragraphs] == ["Сторінка номер два.", "Сторінка номер три."]
     assert [p.page for p in doc.paragraphs] == [2, 3]
     assert doc.page_range == (2, 3)
+    # Numbers count from the start of the book, not from the first page of the range.
+    assert doc.paragraph_offset == 1
+    assert doc.total_paragraphs == 5
+    assert [doc.paragraph_number(i) for i in range(2)] == [2, 3]
+
+
+def test_pdf_page_range_keeps_paragraph_running_into_it(tmp_path):
+    pages = [["Перший абзац.", "Цей абзац починається на першій сторінці і"],
+             ["продовжується на другій сторінці.", "Другий абзац другої сторінки."]]
+    path = make_pdf(tmp_path / "running.pdf", pages)
+    doc = load_document(path, page_range=(2, 2))
+    assert [p.text for p in doc.paragraphs] == [
+        "Цей абзац починається на першій сторінці і продовжується на другій сторінці.",
+        "Другий абзац другої сторінки."]
+    assert doc.paragraph_number(0) == 2
+    assert doc.total_paragraphs == 3
+
+
+def test_pdf_without_range_numbers_from_one(tmp_path):
+    path = make_pdf(tmp_path / "full.pdf", [["Один."], ["Два."]])
+    doc = load_document(path)
+    assert doc.paragraph_offset == 0
+    assert doc.total_paragraphs == 2
+    assert doc.paragraph_number(1) == 2
 
 
 def test_scanned_pdf_detected(tmp_path):
