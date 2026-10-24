@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt
-from PySide6.QtGui import QColor, QFont, QPalette
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QAbstractItemView, QListView
 
 from ..document import Document
@@ -14,14 +14,12 @@ class ParagraphModel(QAbstractListModel):
         super().__init__(parent)
         self._doc: Document | None = None
         self._current = -1
-        self._heading_rows: set[int] = set()
         self.highlight = QColor(0, 120, 255, 70)
 
     def set_document(self, doc: Document | None) -> None:
         self.beginResetModel()
         self._doc = doc
         self._current = -1
-        self._heading_rows = {s.start for s in doc.sections} if doc else set()
         self.endResetModel()
 
     def set_current(self, row: int) -> None:
@@ -42,11 +40,6 @@ class ParagraphModel(QAbstractListModel):
             return self._doc.paragraphs[row].text
         if role == Qt.BackgroundRole and row == self._current:
             return self.highlight
-        if role == Qt.FontRole and row in self._heading_rows:
-            font = QFont()
-            font.setPointSizeF(font.pointSizeF() + 1)
-            font.setBold(True)
-            return font
         if role == Qt.ToolTipRole:
             page = self._doc.paragraphs[row].page
             return f"Абзац {self._doc.paragraph_number(row)}" + (f", сторінка {page}" if page else "") + " — подвійне клацання, щоб читати звідси"
