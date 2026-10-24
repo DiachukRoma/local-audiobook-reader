@@ -211,7 +211,13 @@ scripts/build_macos.sh              # з моделлю
 scripts/build_macos.sh --no-model   # без моделі
 ```
 
-Результат у `dist/`: `Local Audiobook Reader.app` та інсталятор `Local-Audiobook-Reader-<версія>-macOS-arm64.dmg` (відкрийте й перетягніть програму в «Програми»). Збірка підписана лише ad-hoc (без Apple ID), тож на іншому Mac перший запуск такий: клацніть програму правою кнопкою → «Відкрити» → «Відкрити». Інший варіант — виконати `xattr -dr com.apple.quarantine "/Applications/Local Audiobook Reader.app"`. Щоб macOS не показувала це попередження, потрібні сертифікат Developer ID і нотаризація.
+Результат у `dist/`: `Local Audiobook Reader.app` та інсталятор `Local-Audiobook-Reader-<версія>-macOS-arm64.dmg` (відкрийте й перетягніть програму в «Програми»). Збірка підписана лише ad-hoc (без Apple ID), тому на іншому Mac під час першого запуску macOS покаже «Apple could not verify… / Не вдалося перевірити». Що зробити:
+
+1. Натисніть **Done / Готово**, а не «Move to Trash».
+2. Відкрийте **Системні параметри → Приватність і безпека**, прокрутіть донизу й натисніть **Open Anyway / Усе одно відкрити** навпроти «Local Audiobook Reader».
+3. Запустіть програму ще раз і підтвердьте паролем або Touch ID. Це потрібно лише один раз.
+
+Інший спосіб — виконати в Терміналі `xattr -dr com.apple.quarantine "/Applications/Local Audiobook Reader.app"`. У macOS 15+ правий клік → «Відкрити» вже не обходить цю перевірку. Щоб попередження не з'являлося зовсім, потрібні сертифікат Developer ID (платна програма Apple Developer) і нотаризація.
 
 ### Windows 10/11 (x64)
 
