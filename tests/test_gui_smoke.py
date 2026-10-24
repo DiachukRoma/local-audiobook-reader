@@ -104,3 +104,28 @@ def test_scanned_pdf_ocr_flow(app, tmp_path, monkeypatch, uk_paragraphs):
     reopened._clear_ocr_cache()
     assert not list((data / "ocr-cache").glob("*.json"))
     reopened.close()
+
+
+
+def test_background_task_kept_alive_until_result_delivered(app):
+    """A finished task must stay referenced until its queued result reaches the GUI thread;
+    otherwise the garbage collector can delete it and the result is silently lost."""
+    import threading
+
+    from audiobook_reader.ui import tasks
+
+    done = threading.Event()
+    received = []
+
+    def work():
+        done.set()
+        return 42
+
+    task = tasks.BackgroundTask(work)
+    task.succeeded.connect(received.append)
+    task.start()
+    assert done.wait(5)
+    time.sleep(0.2)  # the worker has emitted by now; the GUI thread has not processed events yet
+    assert task in tasks._running and received == []
+    assert _wait(app, lambda: received == [42])
+    assert task not in tasks._running

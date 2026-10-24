@@ -23,9 +23,17 @@ class BackgroundTask(QObject):
         self.cancel_event = threading.Event()
 
     def start(self) -> "BackgroundTask":
+        # Keep the task alive until its result has been delivered on the GUI thread: the signals
+        # are queued, and a task collected right after emitting would silently drop them.
+        # Connected last, so this runs after the caller's own handlers.
+        self.succeeded.connect(self._release)
+        self.failed.connect(self._release)
         _running.add(self)
         threading.Thread(target=self._run, daemon=True, name="bg-task").start()
         return self
+
+    def _release(self, _result=None) -> None:
+        _running.discard(self)
 
     def _run(self) -> None:
         try:
@@ -38,8 +46,6 @@ class BackgroundTask(QObject):
             self.failed.emit(exc)
         else:
             self.succeeded.emit(result)
-        finally:
-            _running.discard(self)
 
 
 def run_background(fn: Callable, *args, on_success: Callable | None = None,
