@@ -209,6 +209,9 @@ class MainWindow(QMainWindow):
         pdf_layout.setContentsMargins(0, 0, 0, 0)
         self.page_from = QSpinBox(minimum=1, maximum=1)
         self.page_to = QSpinBox(minimum=1, maximum=1)
+        for spin in (self.page_from, self.page_to):
+            spin.setMinimumSize(90, 30)
+            spin.lineEdit().setTextMargins(8, 0, 4, 0)  # keep the number off the field's edges
         apply_pages = QPushButton("Застосувати діапазон")
         apply_pages.clicked.connect(self._apply_page_range)
         pdf_layout.addWidget(QLabel("Сторінки PDF: з"))
