@@ -30,6 +30,8 @@ jobs:
           if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup --no-progress -y }
       - name: Build
         shell: pwsh
+        env:
+          PYTHON: python  # the one installed by setup-python, not whatever the "py" launcher picks
         run: scripts\build_windows.ps1
       - uses: actions/upload-artifact@v4
         with:

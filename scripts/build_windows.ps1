@@ -4,7 +4,7 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -NoModel     # model downloaded on first start
 #   powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -NoInstaller # only the program folder
 #
-# Needs Python 3.11+ (python.org, "py" launcher) and Inno Setup 6 for the installer
+# Needs 64-bit Python 3.11–3.14 (python.org; another one can be chosen with $env:PYTHON = "C:\path\python.exe") and Inno Setup 6 for the installer
 # (https://jrsoftware.org/isinfo.php or: winget install JRSoftware.InnoSetup).
 # Output: dist\Local Audiobook Reader\ and dist\Local-Audiobook-Reader-<ver>-Windows-Setup.exe
 param(
@@ -29,6 +29,7 @@ if (-not (Test-Path $VenvPy)) {
     elseif (Get-Command py -ErrorAction SilentlyContinue) { Invoke-Checked py -3 -m venv .venv }
     else { Invoke-Checked python -m venv .venv }
 }
+Write-Host "Python: $(& $VenvPy -c 'import sys, platform; print(sys.version.split()[0], platform.machine())')"
 Invoke-Checked $VenvPy -m pip install --quiet --upgrade pip
 Invoke-Checked $VenvPy -m pip install --quiet -r requirements.txt -r requirements-build.txt
 $Version = (& $VenvPy -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])").Trim()
