@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import sys
 import logging
 import threading
 import time
@@ -17,7 +18,7 @@ from PySide6.QtWidgets import (QComboBox, QFileDialog, QFrame, QHBoxLayout, QLab
 
 from ..audio.cache import AudioCache
 from ..document import SUPPORTED_EXTENSIONS, Document, ScannedPdfError, load_document
-from ..document.ocr import OcrCancelled, VisionOcr
+from ..document.ocr import OcrCancelled, create_ocr, engine_name
 from ..document.ocr import is_available as ocr_available
 from ..reader.controller import ReaderController, ReaderEvents, VoiceSettings
 from ..reader.export import ExportCancelled, export_audio, m4a_supported
@@ -37,8 +38,14 @@ LANG_LABELS = {"uk": "Українська", "ru": "Русский"}
 STATE_LABELS = {"stopped": "Зупинено", "buffering": "Генерування мовлення…", "playing": "Читання",
                 "paused": "Пауза", "finished": "Книжку дочитано"}
 FILE_FILTER = "Книжки (*.pdf *.epub *.txt *.docx);;PDF (*.pdf);;EPUB (*.epub);;Текст (*.txt);;Word (*.docx)"
-OCR_NOTE = ("Розпізнавання тексту виконується локально вбудованим у macOS рушієм Apple Vision. "
-            "Документ не залишає ваш Mac. Результат кешується, тож повторне відкриття миттєве.")
+if sys.platform == "darwin":
+    OCR_NOTE = ("Розпізнавання тексту виконується локально вбудованим у macOS рушієм Apple Vision. "
+                "Документ не залишає ваш Mac. Результат кешується, тож повторне відкриття миттєве.")
+    OCR_PAGE_TIME = "0,2–1 с"
+else:
+    OCR_NOTE = ("Розпізнавання тексту виконується локально рушієм RapidOCR. Документ не залишає ваш комп'ютер. "
+                "Результат кешується, тож повторне відкриття миттєве.")
+    OCR_PAGE_TIME = "2–6 с"
 
 class _PaddedStatusBar(QStatusBar):
     """Status bar with side padding; Qt draws temporary messages at a fixed 6 px offset otherwise."""
@@ -449,7 +456,7 @@ class MainWindow(QMainWindow):
             mode = ocr_mode or (progress.ocr_mode if progress and progress.ocr_mode else "off")
             ocr = None
             if mode in ("scans", "all") and path.suffix.lower() == ".pdf":
-                ocr = VisionOcr(self._ocr_languages(), self.data_dir / "ocr-cache", fingerprint)
+                ocr = create_ocr(self._ocr_languages(), self.data_dir / "ocr-cache", fingerprint)
             doc = load_document(path, rng, ocr=ocr, ocr_all=mode == "all",
                                 progress=lambda done, total: task.progress.emit(done, total), cancel=cancel)
             return doc, fingerprint, progress, mode
@@ -491,7 +498,7 @@ class MainWindow(QMainWindow):
     def _offer_ocr(self, path: Path, pages: int, all_pages_option: bool = False) -> None:
         if not ocr_available():
             QMessageBox.warning(self, "Розпізнавання недоступне",
-                                "Рушій розпізнавання Apple Vision недоступний у цьому середовищі. "
+                                f"Рушій розпізнавання {engine_name()} недоступний у цьому середовищі. "
                                 "Виконайте scripts/setup.sh, щоб установити залежності.")
             return
         box = QMessageBox(self)
@@ -506,7 +513,7 @@ class MainWindow(QMainWindow):
             every = box.addButton("Усі сторінки", QMessageBox.AcceptRole)
         else:
             box.setText(f"Цей PDF — скан без текстового шару ({pages} стор.). Розпізнати текст?")
-            box.setInformativeText(f"{OCR_NOTE}\n\nОрієнтовно 0,2–1 с на сторінку.")
+            box.setInformativeText(f"{OCR_NOTE}\n\nОрієнтовно {OCR_PAGE_TIME} на сторінку.")
             scans = box.addButton("Розпізнати", QMessageBox.AcceptRole)
             every = None
         box.addButton("Скасувати", QMessageBox.RejectRole)

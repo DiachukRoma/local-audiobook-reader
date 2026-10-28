@@ -19,6 +19,7 @@ dependencies = [
     "num2words==0.5.14",
     "pyobjc-core==12.2.2; sys_platform == 'darwin'",
     "pyobjc-framework-Vision==12.2.2; sys_platform == 'darwin'",
+    "rapidocr==3.10.0; sys_platform != 'darwin'",
 ]
 
 [project.scripts]

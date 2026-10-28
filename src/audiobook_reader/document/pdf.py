@@ -58,7 +58,7 @@ def _needs_ocr(page, blocks: list) -> bool:
 
 def load_pdf(path: Path, page_range: tuple[int, int] | None = None, ocr=None, ocr_all: bool = False,
              progress: Callable[[int, int], None] | None = None, cancel: threading.Event | None = None) -> Document:
-    """Load a PDF. With ``ocr`` (a VisionOcr), scanned pages — or all pages when ``ocr_all`` —
+    """Load a PDF. With ``ocr`` (a PageOcr), scanned pages — or all pages when ``ocr_all`` —
     are recognized locally; otherwise a mostly scanned PDF raises ScannedPdfError."""
     import pymupdf
 

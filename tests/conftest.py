@@ -24,6 +24,8 @@ CYRILLIC_FONTS = [
     "/System/Library/Fonts/Supplemental/Arial.ttf",
     "/Library/Fonts/Arial Unicode.ttf",
     "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
+    "C:/Windows/Fonts/arial.ttf",
+    "C:/Windows/Fonts/times.ttf",
 ]
 
 

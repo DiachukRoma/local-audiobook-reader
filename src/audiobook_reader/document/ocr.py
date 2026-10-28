@@ -1,8 +1,9 @@
-"""Local OCR for scanned PDF pages using Apple's Vision framework (built into macOS).
+"""Local OCR for scanned PDF pages.
 
-Pages are rendered with PyMuPDF and recognized on-device by ``VNRecognizeTextRequest``;
-nothing leaves the computer. Results are cached per document so a scanned book is
-recognized only once.
+On macOS pages are recognized by Apple's Vision framework (``VNRecognizeTextRequest``);
+on Windows and Linux by RapidOCR (PaddleOCR models for Cyrillic, run with onnxruntime).
+Pages are rendered with PyMuPDF and recognized on-device; nothing leaves the computer.
+Results are cached per document so a scanned book is recognized only once.
 """
 
 from __future__ import annotations
@@ -18,7 +19,6 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-OCR_DPI = 300
 LANGUAGE_CODES = {"uk": "uk-UA", "ru": "ru-RU"}
 
 # Latin letters that look like Cyrillic ones; OCR sometimes mixes them into Cyrillic words.
@@ -33,7 +33,7 @@ _WORD = re.compile(r"\S+")
 
 
 class OcrUnavailableError(Exception):
-    """Apple Vision text recognition is not available on this system."""
+    """No OCR engine is available on this system."""
 
 
 class OcrCancelled(Exception):
@@ -57,10 +57,42 @@ def clean_ocr_text(text: str) -> str:
 
 
 def is_available() -> bool:
-    if sys.platform != "darwin":
-        return False
     import importlib.util
-    return importlib.util.find_spec("Vision") is not None  # pyobjc-framework-Vision
+    if sys.platform == "darwin":
+        return importlib.util.find_spec("Vision") is not None  # pyobjc-framework-Vision
+    return importlib.util.find_spec("rapidocr") is not None
+
+
+def engine_name() -> str:
+    return "Apple Vision" if sys.platform == "darwin" else "RapidOCR"
+
+
+def create_ocr(languages: tuple[str, ...] = ("uk", "ru"), cache_dir: Path | None = None,
+               fingerprint: str | None = None) -> "PageOcr":
+    """The OCR engine for this platform: Apple Vision on macOS, RapidOCR elsewhere."""
+    cls = VisionOcr if sys.platform == "darwin" else RapidOcr
+    return cls(languages, cache_dir, fingerprint)
+
+
+def merge_fragments(lines: list[tuple[float, float, float, float, str]]) -> list[tuple[float, float, float, float, str]]:
+    """Sort OCR lines top to bottom and join pieces of one printed line that the detector split
+    (same row, small horizontal gap)."""
+    rows: list[list] = []
+    for line in sorted(lines, key=lambda item: (item[0], item[2])):
+        top, bottom, left, right, text = line
+        height = bottom - top
+        for row in rows:
+            r_top, r_bottom, r_left, r_right, r_text = row
+            overlap = min(bottom, r_bottom) - max(top, r_top)
+            near = left - r_right < 2 * height and r_left - right < 2 * height
+            if overlap > 0.5 * min(height, r_bottom - r_top) and near:
+                pieces = sorted([(r_left, r_text), (left, text)])
+                row[:] = [min(top, r_top), max(bottom, r_bottom), min(left, r_left), max(right, r_right),
+                          " ".join(t for _l, t in pieces)]
+                break
+        else:
+            rows.append([top, bottom, left, right, text])
+    return [tuple(row) for row in sorted(rows, key=lambda row: (row[0], row[2]))]
 
 
 def group_lines(lines: list[tuple[float, float, float, float, str]]) -> list[tuple[float, float, str]]:
@@ -94,14 +126,14 @@ def group_lines(lines: list[tuple[float, float, float, float, str]]) -> list[tup
     return [(top, bottom, "\n".join(texts)) for top, bottom, texts in paragraphs]
 
 
-class VisionOcr:
-    """Recognizes PDF pages; results are cached in ``cache_dir/<fingerprint>.json``."""
+class PageOcr:
+    """Recognizes PDF pages; results are cached in ``cache_dir/<fingerprint>.json``.
+    Subclasses implement ``_recognize_pixmap`` and ``_cache_tag``."""
+
+    DPI = 300
 
     def __init__(self, languages: tuple[str, ...] = ("uk", "ru"), cache_dir: Path | None = None,
                  fingerprint: str | None = None):
-        if not is_available():
-            raise OcrUnavailableError(
-                "Розпізнавання тексту Apple Vision недоступне (потрібні macOS 13+ і пакет pyobjc-framework-Vision).")
         self.languages = [LANGUAGE_CODES[lang] for lang in languages if lang in LANGUAGE_CODES] or ["uk-UA", "ru-RU"]
         self._cache_path = (Path(cache_dir) / f"{fingerprint}.json") if cache_dir and fingerprint else None
         self._lock = threading.Lock()
@@ -110,7 +142,7 @@ class VisionOcr:
 
     # ------------------------------------------------------------- cache
     def _cache_tag(self) -> str:
-        return f"vision-{OCR_DPI}-{','.join(self.languages)}"
+        raise NotImplementedError
 
     def _load_cache(self) -> dict:
         if self._cache_path is None:
@@ -143,8 +175,7 @@ class VisionOcr:
         key = str(page.number + 1)
         if key in self._cache:
             return [tuple(block) for block in self._cache[key]]
-        png = page.get_pixmap(dpi=OCR_DPI).tobytes("png")
-        lines = self._recognize_png(png)
+        lines = self._recognize_pixmap(page.get_pixmap(dpi=self.DPI))
         blocks = group_lines(lines)
         self._cache[key] = [list(b) for b in blocks]
         self._dirty += 1
@@ -152,11 +183,29 @@ class VisionOcr:
             self.flush()
         return blocks
 
-    def _recognize_png(self, png: bytes) -> list[tuple[float, float, float, float, str]]:
+    def _recognize_pixmap(self, pix) -> list[tuple[float, float, float, float, str]]:
+        """Return lines (top, bottom, left, right, text) — normalized, top-left origin."""
+        raise NotImplementedError
+
+
+class VisionOcr(PageOcr):
+    """Apple Vision, built into macOS 13+."""
+
+    def __init__(self, *args, **kwargs):
+        if not is_available():
+            raise OcrUnavailableError(
+                "Розпізнавання тексту Apple Vision недоступне (потрібні macOS 13+ і пакет pyobjc-framework-Vision).")
+        super().__init__(*args, **kwargs)
+
+    def _cache_tag(self) -> str:
+        return f"vision-{self.DPI}-{','.join(self.languages)}"
+
+    def _recognize_pixmap(self, pix) -> list[tuple[float, float, float, float, str]]:
         import Foundation
         import objc
         import Vision
 
+        png = pix.tobytes("png")
         with objc.autorelease_pool():
             data = Foundation.NSData.dataWithBytes_length_(png, len(png))
             handler = Vision.VNImageRequestHandler.alloc().initWithData_options_(data, None)
@@ -180,3 +229,67 @@ class VisionOcr:
                 bottom = 1.0 - box.origin.y
                 lines.append((top, bottom, box.origin.x, box.origin.x + box.size.width, text))
         return lines
+
+
+class RapidOcr(PageOcr):
+    """RapidOCR (PaddleOCR PP-OCRv5 Cyrillic models on onnxruntime) for Windows and Linux.
+    One Cyrillic recognition model covers both Ukrainian and Russian."""
+
+    DPI = 200  # enough for book text; 300 dpi is twice as slow without better results
+    _engine = None
+    _engine_lock = threading.Lock()
+
+    def __init__(self, *args, **kwargs):
+        if not is_available():
+            raise OcrUnavailableError("Розпізнавання тексту недоступне: не встановлено пакет rapidocr.")
+        super().__init__(*args, **kwargs)
+
+    def _cache_tag(self) -> str:
+        return f"rapidocr-{self.DPI}-cyrillic"
+
+    @classmethod
+    def engine(cls):
+        """The shared recognizer; models are downloaded into OCR_MODEL_DIR on first use if missing."""
+        with cls._engine_lock:
+            if cls._engine is None:
+                from rapidocr import LangRec, ModelType, OCRVersion, RapidOCR
+
+                from ..storage.settings import OCR_MODEL_DIR
+                cls._engine = RapidOCR(params={
+                    "Global.model_root_dir": str(OCR_MODEL_DIR),
+                    "Global.log_level": "warning",
+                    "Global.max_side_len": 2400,  # the default 2000 shrinks an A4 page enough to merge lines
+                    # Book pages are upright; the orientation classifier wrongly flips whole lines and loses them.
+                    "Global.use_cls": False,
+                    "Rec.lang_type": LangRec.CYRILLIC,
+                    "Rec.ocr_version": OCRVersion.PPOCRV5,
+                    "Rec.model_type": ModelType.MOBILE,
+                })
+            return cls._engine
+
+    @classmethod
+    def prefetch_models(cls) -> None:
+        engine = cls.engine()
+        engine._load_det_model()
+        engine._load_rec_model()
+
+    def _recognize_pixmap(self, pix) -> list[tuple[float, float, float, float, str]]:
+        import numpy as np
+
+        if pix.n != 3 or pix.alpha:
+            import pymupdf
+            pix = pymupdf.Pixmap(pymupdf.csRGB, pix, 0)
+        rgb = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.stride)[:, :pix.width * 3]
+        bgr = np.ascontiguousarray(rgb.reshape(pix.height, pix.width, 3)[:, :, ::-1])
+        result = self.engine()(bgr)
+        if not result.txts:
+            return []
+        lines = []
+        for box, text in zip(result.boxes, result.txts):
+            text = clean_ocr_text(str(text))
+            if not text:
+                continue
+            xs = [float(x) for x, _y in box]
+            ys = [float(y) for _x, y in box]
+            lines.append((min(ys) / pix.height, max(ys) / pix.height, min(xs) / pix.width, max(xs) / pix.width, text))
+        return merge_fragments(lines)

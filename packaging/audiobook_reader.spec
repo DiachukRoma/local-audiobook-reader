@@ -3,6 +3,7 @@
 #
 # Environment:
 #   BUNDLE_MODEL=0   build without the speech model (the app offers to download it on first start)
+#                    and, on Windows, without the OCR models (downloaded on first OCR)
 #   APP_ICON=<path>  .icns (macOS) or .ico (Windows) application icon
 
 import os
@@ -16,6 +17,7 @@ ROOT = Path(SPECPATH).parent
 APP_NAME = "Local Audiobook Reader"
 VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
 MODEL_DIR = ROOT / "models" / "supertonic-3"
+OCR_MODEL_DIR = ROOT / "models" / "rapidocr"
 ICON = os.environ.get("APP_ICON") or None
 
 datas = [(str(ROOT / "assets" / "icon.png"), "assets")]
@@ -28,6 +30,15 @@ if os.environ.get("BUNDLE_MODEL", "1") != "0":
     for path in MODEL_DIR.rglob("*"):
         if path.is_file() and not path.name.startswith(".") and ".cache" not in path.parts:
             datas.append((str(path), str(Path("models/supertonic-3") / path.parent.relative_to(MODEL_DIR))))
+if sys.platform != "darwin":
+    # RapidOCR reads its config.yaml / default_models.yaml at runtime; its models live in models/rapidocr.
+    datas += collect_data_files("rapidocr", excludes=["models/**"])
+    if os.environ.get("BUNDLE_MODEL", "1") != "0":
+        if not any(OCR_MODEL_DIR.glob("*.onnx")):
+            raise SystemExit(f"OCR models not found in {OCR_MODEL_DIR}; run scripts/download_model.py or set BUNDLE_MODEL=0")
+        for path in OCR_MODEL_DIR.iterdir():
+            if path.is_file():
+                datas.append((str(path), "models/rapidocr"))
 
 # num2words picks its language module by name at runtime.
 hiddenimports = collect_submodules("num2words")

@@ -35,6 +35,10 @@ _SHIPPED_MODEL_DIR = RESOURCE_ROOT / "models" / "supertonic-3"
 # A build made without the model downloads it on first start into the user's data folder.
 DEFAULT_MODEL_DIR = (_SHIPPED_MODEL_DIR if not FROZEN or _SHIPPED_MODEL_DIR.is_dir()
                      else DEFAULT_DATA_DIR / "models" / "supertonic-3")
+# RapidOCR models (Windows/Linux OCR); downloaded on first use when not shipped with the build.
+_SHIPPED_OCR_MODEL_DIR = RESOURCE_ROOT / "models" / "rapidocr"
+OCR_MODEL_DIR = (_SHIPPED_OCR_MODEL_DIR if not FROZEN or _SHIPPED_OCR_MODEL_DIR.is_dir()
+                 else DEFAULT_DATA_DIR / "models" / "rapidocr")
 # Playback speed range. The model always speaks naturally; tempo is changed by time stretching.
 SPEED_MIN, SPEED_MAX = 0.7, 3.0
 

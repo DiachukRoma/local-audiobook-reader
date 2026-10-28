@@ -13,3 +13,4 @@ python-docx==1.2.0
 num2words==0.5.14          # numbers -> words for uk/ru (LGPL)
 pyobjc-core==12.2.2; sys_platform == "darwin"              # bridge to macOS frameworks (MIT)
 pyobjc-framework-Vision==12.2.2; sys_platform == "darwin"  # Apple Vision on-device OCR for scanned PDFs (MIT)
+rapidocr==3.10.0; sys_platform != "darwin"                 # on-device OCR for scanned PDFs on Windows/Linux (Apache-2.0)
