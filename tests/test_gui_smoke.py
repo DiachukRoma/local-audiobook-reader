@@ -176,3 +176,29 @@ def test_paragraph_list_follows_the_paragraph_being_read(app):
         view.highlight(row)
         app.processEvents()
         assert on_screen(row), row
+
+
+def test_current_paragraph_font_size_setting(app, tmp_path, monkeypatch, uk_paragraphs):
+    """The font size chosen in Settings applies to the bottom pane at once and is remembered."""
+    from audiobook_reader.storage.settings import Settings
+    from audiobook_reader.ui import main_window as mw
+
+    data = tmp_path / "data"
+    data.mkdir()
+    Settings(cache_dir=str(tmp_path / "cache")).save(data / "settings.json")
+    book = tmp_path / "книга.txt"
+    book.write_text("\n\n".join(uk_paragraphs), encoding="utf-8")
+    window = mw.MainWindow(data)
+    window.open_path(book)
+    assert _wait(app, lambda: window.document is not None and window.current_text.toPlainText())
+    assert "font-size:15px" in window.current_text.toHtml().replace(" ", "")
+
+    def accept_with_bigger_font(dialog):
+        dialog.font_size.setValue(26)
+        return mw.SettingsDialog.Accepted
+
+    monkeypatch.setattr(mw.SettingsDialog, "exec", accept_with_bigger_font)
+    window._open_settings()
+    assert "font-size:26px" in window.current_text.toHtml().replace(" ", "")
+    assert Settings.load(data / "settings.json").current_text_font_size == 26
+    window.close()

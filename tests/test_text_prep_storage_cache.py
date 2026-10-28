@@ -41,7 +41,7 @@ def test_expand_disabled_leaves_digits():
 # ---------------------------------------------------------------- storage
 def test_settings_roundtrip_and_validation(tmp_path):
     path = tmp_path / "settings.json"
-    s = Settings(voice="M2", speed=1.3, language="ru")
+    s = Settings(voice="M2", speed=1.3, language="ru", current_text_font_size=22)
     s.add_recent("/a.pdf")
     s.add_recent("/b.epub")
     s.add_recent("/a.pdf")
@@ -49,9 +49,13 @@ def test_settings_roundtrip_and_validation(tmp_path):
     loaded = Settings.load(path)
     assert loaded.voice == "M2" and loaded.speed == 1.3 and loaded.language == "ru"
     assert loaded.recent_files == ["/a.pdf", "/b.epub"]
-    path.write_text(json.dumps({"speed": 99, "language": "xx", "unknown": 1}), encoding="utf-8")
+    assert loaded.current_text_font_size == 22
+    path.write_text(json.dumps({"speed": 99, "language": "xx", "unknown": 1, "current_text_font_size": 500}),
+                    encoding="utf-8")
     loaded = Settings.load(path)
     assert loaded.speed == 3.0 and loaded.language == "auto"
+    assert loaded.current_text_font_size == 48
+    assert Settings().current_text_font_size == 15
 
 
 def test_corrupt_settings_fall_back_to_defaults(tmp_path):

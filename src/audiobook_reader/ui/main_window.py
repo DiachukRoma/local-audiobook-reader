@@ -115,6 +115,7 @@ class MainWindow(QMainWindow):
         self._last_saved = (-1, -1, 0.0)
         self._loading = False
         self.ocr_mode = "off"
+        self._current_text_position: tuple[int, int] | None = None  # (paragraph, segment) in the bottom pane
 
         self.bridge = _Bridge()
         self.bridge.position.connect(self._on_position)
@@ -734,15 +735,19 @@ class MainWindow(QMainWindow):
             self.sections_list.setCurrentRow(section_index)
             self.sections_list.blockSignals(False)
         self.position_label.setText(" · ".join(parts))
+        self._render_current_text(paragraph, segment)
+        self._save_progress()
 
-        segments = self.controller.segments(paragraph)
+    def _render_current_text(self, paragraph: int, segment: int) -> None:
+        """Show the paragraph being read in the bottom pane, with the current fragment highlighted."""
+        self._current_text_position = (paragraph, segment)
         rendered = []
-        for i, seg in enumerate(segments):
+        for i, seg in enumerate(self.controller.segments(paragraph)):
             text = html.escape(seg)
             rendered.append(f"<span style='background-color: rgba(255, 200, 0, 90);'>{text}</span>"
                             if i == segment else text)
-        self.current_text.setHtml(f"<div style='font-size: 15px; line-height: 140%;'>{' '.join(rendered)}</div>")
-        self._save_progress()
+        size = self.settings.current_text_font_size
+        self.current_text.setHtml(f"<div style='font-size: {size}px; line-height: 140%;'>{' '.join(rendered)}</div>")
 
     def _on_state(self, state: str) -> None:
         playing = state in ("playing", "buffering")
@@ -803,6 +808,10 @@ class MainWindow(QMainWindow):
             except OSError as exc:
                 QMessageBox.critical(self, "Кеш", f"Не вдалося використати теку кешу:\n{exc}")
         self._apply_voice_settings()
+        position = self._current_text_position
+        if (new.current_text_font_size != old.current_text_font_size and position and self.document
+                and position[0] < len(self.document.paragraphs)):
+            self._render_current_text(*position)
         if (new.model_dir, new.quality_steps) != (old.model_dir, old.quality_steps):
             self.controller.stop()
             self.engine = None

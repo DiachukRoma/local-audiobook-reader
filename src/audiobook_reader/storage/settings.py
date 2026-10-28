@@ -41,6 +41,8 @@ OCR_MODEL_DIR = (_SHIPPED_OCR_MODEL_DIR if not FROZEN or _SHIPPED_OCR_MODEL_DIR.
                  else DEFAULT_DATA_DIR / "models" / "rapidocr")
 # Playback speed range. The model always speaks naturally; tempo is changed by time stretching.
 SPEED_MIN, SPEED_MAX = 0.7, 3.0
+# Font size range (px) of the paragraph being read.
+FONT_SIZE_MIN, FONT_SIZE_MAX = 10, 48
 
 
 def _atomic_write_json(path: Path, data: object) -> None:
@@ -95,6 +97,7 @@ class Settings:
     sentence_pause: float = 0.2
     recent_files: list[str] = field(default_factory=list)
     current_text_height: int = 120
+    current_text_font_size: int = 15  # px, the paragraph being read (bottom pane)
 
     @classmethod
     def load(cls, path: Path) -> "Settings":
@@ -104,6 +107,7 @@ class Settings:
         settings.speed = min(max(float(settings.speed), SPEED_MIN), SPEED_MAX)
         settings.quality_steps = min(max(int(settings.quality_steps), 2), 32)
         settings.current_text_height = min(max(int(settings.current_text_height), 50), 2000)
+        settings.current_text_font_size = min(max(int(settings.current_text_font_size), FONT_SIZE_MIN), FONT_SIZE_MAX)
         if not settings.model_dir or (FROZEN and not Path(settings.model_dir).is_dir()):
             settings.model_dir = str(DEFAULT_MODEL_DIR)
         if settings.language not in ("auto", "uk", "ru"):

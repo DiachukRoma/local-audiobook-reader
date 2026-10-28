@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QDoubleSpin
                                QWidget)
 
 from ..audio.cache import AudioCache
-from ..storage.settings import Settings
+from ..storage.settings import FONT_SIZE_MAX, FONT_SIZE_MIN, Settings
 
 
 def _path_row(edit: QLineEdit, parent: QWidget) -> QWidget:
@@ -51,6 +51,9 @@ class SettingsDialog(QDialog):
         self.bible.setChecked(settings.bible_references)
         self.par_pause = QDoubleSpinBox(suffix=" с", minimum=0.0, maximum=3.0, singleStep=0.05, value=settings.paragraph_pause)
         self.sent_pause = QDoubleSpinBox(suffix=" с", minimum=0.0, maximum=2.0, singleStep=0.05, value=settings.sentence_pause)
+        self.font_size = QSpinBox(suffix=" px", minimum=FONT_SIZE_MIN, maximum=FONT_SIZE_MAX,
+                                  value=settings.current_text_font_size)
+        self.font_size.setToolTip("Розмір тексту в нижньому блоці, де показано абзац, що читається. Типово 15 px.")
 
         form = QFormLayout()
         form.addRow("Тека моделі Supertonic 3:", _path_row(self.model_dir, self))
@@ -59,6 +62,7 @@ class SettingsDialog(QDialog):
         form.addRow("Якість синтезу (кроки):", self.steps)
         form.addRow("Пауза між абзацами:", self.par_pause)
         form.addRow("Пауза між фрагментами:", self.sent_pause)
+        form.addRow("Шрифт поточного абзацу:", self.font_size)
         form.addRow("", self.expand)
         form.addRow("", self.bible)
 
@@ -130,4 +134,5 @@ class SettingsDialog(QDialog):
             bible_references=self.bible.isChecked(),
             paragraph_pause=round(self.par_pause.value(), 2),
             sentence_pause=round(self.sent_pause.value(), 2),
+            current_text_font_size=self.font_size.value(),
         )
