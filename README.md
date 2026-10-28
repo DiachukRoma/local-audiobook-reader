@@ -86,6 +86,7 @@ cd ~/Documents/local-audiobook-reader
 
 - З Finder: двічі клацніть **`Local Audiobook Reader.app`** у теці проєкту (можна перетягнути його в Dock). Також можна обрати книжку у Finder → «Відкрити за допомогою» → Local Audiobook Reader.
 - З Термінала: `./run.sh` (або `./run.sh шлях/до/книжки.epub`).
+- На Windows (з теки проєкту): ярлик на робочому столі створює `powershell -ExecutionPolicy Bypass -File scripts\create_shortcut.ps1`. Ярлик запускає `run.pyw` без вікна консолі; після переміщення теки проєкту виконайте скрипт ще раз. З Git Bash також працює `./run.sh`.
 
 `.app` — це легкий запускач, який використовує `.venv` проєкту, тому теку проєкту не слід переміщувати (якщо перемістили — запустіть `scripts/build_app.sh` ще раз).
 
