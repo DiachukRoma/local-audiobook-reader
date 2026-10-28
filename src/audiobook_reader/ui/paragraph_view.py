@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt
+from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt, QTimer
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QAbstractItemView, QListView
 
@@ -22,12 +22,12 @@ class ParagraphModel(QAbstractListModel):
         self._current = -1
         self.endResetModel()
 
-    def set_current(self, row: int) -> None:
+    def set_current(self, row: int) -> int:
+        """Change the highlighted row and return the previous one. No dataChanged: with word-wrapped rows
+        QListView would re-run its whole (batched) layout, which loses the scroll position; the view
+        repaints the two rows itself."""
         old, self._current = self._current, row
-        for r in (old, row):
-            if 0 <= r < self.rowCount():
-                idx = self.index(r)
-                self.dataChanged.emit(idx, idx, [Qt.BackgroundRole])
+        return old
 
     def rowCount(self, parent=QModelIndex()) -> int:  # noqa: N802 (Qt API)
         return 0 if parent.isValid() or self._doc is None else len(self._doc.paragraphs)
@@ -69,9 +69,33 @@ class ParagraphView(QListView):
         color.setAlpha(70)
         self.model_.highlight = color
         self.setModel(self.model_)
+        self._follow_row: int | None = None
+        self._follow_tries = 0
 
     def highlight(self, row: int, follow: bool = True) -> None:
-        self.model_.set_current(row)
+        old = self.model_.set_current(row)
+        for r in (old, row):
+            if 0 <= r < self.model_.rowCount():
+                self.viewport().update(self.visualRect(self.model_.index(r)))
         if follow and 0 <= row < self.model_.rowCount():
-            self.scrollTo(self.model_.index(row), QAbstractItemView.PositionAtCenter)
+            self._follow_row = row
+            self._follow_tries = 0
+            self._scroll_to_followed()
+
+    def _scroll_to_followed(self) -> None:
+        """Center the followed row. Right after a document is loaded the batched layout may not have
+        reached it yet (empty rect, or a scroll range that still ends above it), so retry until the row
+        is really on screen."""
+        row = self._follow_row
+        if row is None or row >= self.model_.rowCount():
+            return
+        index = self.model_.index(row)
+        if self.visualRect(index).isValid():
+            self.scrollTo(index, QAbstractItemView.PositionAtCenter)
+            if self.viewport().rect().intersects(self.visualRect(index)):
+                self._follow_row = None
+                return
+        if self._follow_tries < 200:  # about 10 s
+            self._follow_tries += 1
+            QTimer.singleShot(50, self._scroll_to_followed)
 

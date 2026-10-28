@@ -73,7 +73,7 @@ def test_scanned_pdf_ocr_flow(app, tmp_path, monkeypatch, uk_paragraphs):
     from conftest import make_pdf, make_scanned_pdf
 
     if not is_available():
-        pytest.skip("Apple Vision OCR not available")
+        pytest.skip("OCR engine not available")
     data = tmp_path / "data"
     data.mkdir()
     Settings(cache_dir=str(tmp_path / "cache")).save(data / "settings.json")
@@ -129,3 +129,29 @@ def test_background_task_kept_alive_until_result_delivered(app):
     assert task in tasks._running and received == []
     assert _wait(app, lambda: received == [42])
     assert task not in tasks._running
+
+
+def test_paragraph_list_follows_the_paragraph_being_read(app):
+    """The highlighted paragraph stays on screen in a long book, also right after opening it.
+    A highlight change must not re-run the batched layout (that used to make the list jump)."""
+    from types import SimpleNamespace
+
+    from audiobook_reader.ui.paragraph_view import ParagraphView
+
+    words = [5, 40, 120, 15, 80]
+    paragraphs = [SimpleNamespace(text=" ".join(["слово"] * words[i % 5]), page=1) for i in range(3000)]
+    doc = SimpleNamespace(paragraphs=paragraphs, sections=[], paragraph_number=lambda row: row + 1)
+    view = ParagraphView()
+    view.resize(800, 500)
+    view.show()
+
+    def on_screen(row):
+        return view.viewport().rect().intersects(view.visualRect(view.model_.index(row)))
+
+    view.model_.set_document(doc)
+    view.highlight(2000)  # restored reading position, layout not finished yet
+    assert _wait(app, lambda: on_screen(2000))
+    for row in range(2001, 2010):
+        view.highlight(row)
+        app.processEvents()
+        assert on_screen(row), row
