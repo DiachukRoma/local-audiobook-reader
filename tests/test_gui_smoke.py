@@ -50,6 +50,27 @@ def test_open_document_and_restore_position(app, tmp_path, uk_paragraphs):
     assert str(book) in reopened.settings.recent_files
     reopened.close()
 
+    # Next start: the last book reopens by itself, at the saved position.
+    restarted = MainWindow(data)
+    restarted.restore_last_document()
+    assert _wait(app, lambda: restarted.document is not None)
+    assert restarted.document.path == book
+    assert restarted.controller.position == (2, 0)
+    restarted.close()
+
+
+def test_no_last_document_to_restore(app, tmp_path):
+    from audiobook_reader.storage.settings import Settings
+    from audiobook_reader.ui.main_window import MainWindow
+
+    data = tmp_path / "data"
+    data.mkdir()
+    Settings(cache_dir=str(tmp_path / "cache"), recent_files=[str(tmp_path / "deleted.txt")]).save(data / "settings.json")
+    window = MainWindow(data)
+    window.restore_last_document()  # the file is gone: nothing happens, no error dialog
+    assert window.document is None and not window._loading
+    window.close()
+
 
 def test_scanned_or_broken_file_does_not_crash(app, tmp_path, monkeypatch):
     from audiobook_reader.ui import main_window as mw

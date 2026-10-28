@@ -65,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     log = logging.getLogger("audiobook_reader")
     log.info("Starting Local Audiobook Reader")
 
-    from PySide6.QtCore import QEvent
+    from PySide6.QtCore import QEvent, QTimer
     from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
@@ -105,6 +105,9 @@ def main(argv: list[str] | None = None) -> int:
         if not arg.startswith("-") and Path(arg).is_file():
             window.open_path(Path(arg))
             break
+    # Otherwise reopen the last book. Delayed so that a file opened from Finder, which arrives as an
+    # event shortly after start, wins over it.
+    QTimer.singleShot(500, window.restore_last_document)
     code = app.exec()
     log.info("Exited with code %s", code)
     return code

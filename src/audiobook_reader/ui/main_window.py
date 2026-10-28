@@ -435,6 +435,14 @@ class MainWindow(QMainWindow):
         if path:
             self.open_path(Path(path))
 
+    def restore_last_document(self) -> None:
+        """At startup: reopen the book read last time, unless a document is already open or opening."""
+        if self.document is not None or self._loading:
+            return
+        last = next((Path(p) for p in self.settings.recent_files[:1] if Path(p).is_file()), None)
+        if last is not None:
+            self.open_path(last)
+
     def open_path(self, path: Path, page_range: tuple[int, int] | None = None, use_saved_range: bool = True,
                   ocr_mode: str | None = None) -> None:
         """Open a document in the background. ``ocr_mode``: None (as saved), "off", "scans" or "all"."""
