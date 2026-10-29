@@ -33,7 +33,7 @@ from .tasks import BackgroundTask, run_background
 log = logging.getLogger(__name__)
 
 APP_NAME = "Local Audiobook Reader"
-AUTHOR = "Дячук Роман"
+AUTHOR = "Roman Diachuk"
 LANG_LABELS = {"uk": "Українська", "ru": "Русский"}
 STATE_LABELS = {"stopped": "Зупинено", "buffering": "Генерування мовлення…", "playing": "Читання",
                 "paused": "Пауза", "finished": "Книжку дочитано"}
@@ -48,7 +48,11 @@ else:
     OCR_PAGE_TIME = "2–6 с"
 
 class _PaddedStatusBar(QStatusBar):
-    """Status bar with side padding; Qt draws temporary messages at a fixed 6 px offset otherwise."""
+    """Status bar with side padding; Qt draws temporary messages at a fixed 6 px offset otherwise.
+
+    The base paintEvent is never called: it only draws item frames, which the Windows style
+    renders as vertical lines around every widget.
+    """
     PADDING = 14
 
     def __init__(self, parent=None):
@@ -58,7 +62,6 @@ class _PaddedStatusBar(QStatusBar):
     def paintEvent(self, event):  # noqa: N802 (Qt API)
         message = self.currentMessage()
         if not message:
-            super().paintEvent(event)
             return
         painter = QPainter(self)
         painter.setPen(self.palette().windowText().color())
@@ -306,7 +309,7 @@ class MainWindow(QMainWindow):
         self.setStatusBar(_PaddedStatusBar())
         self.status_label = QLabel("Завантаження моделі мовлення…")
         self.statusBar().addWidget(self.status_label, 1)
-        self.author_label = QLabel(f"Розробник: {AUTHOR}")
+        self.author_label = QLabel(f"created by: {AUTHOR}")
         self.author_label.setPalette(self.subtitle_label.palette())
         self.statusBar().addPermanentWidget(self.author_label)
 
