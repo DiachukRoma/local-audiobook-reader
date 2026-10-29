@@ -21,12 +21,14 @@ from ..document import SUPPORTED_EXTENSIONS, Document, ScannedPdfError, load_doc
 from ..document.ocr import OcrCancelled, create_ocr, engine_name
 from ..document.ocr import is_available as ocr_available
 from ..reader.controller import ReaderController, ReaderEvents, VoiceSettings
+from ..reader.duration import ReadingTime, format_duration
 from ..reader.export import ExportCancelled, export_audio, m4a_supported
 from ..storage.settings import SPEED_MAX, SPEED_MIN, Progress, ProgressStore, Settings, document_fingerprint
 from ..tts.base import ModelMissingError, TTSEngine
 from ..tts.supertonic_engine import APPROX_DOWNLOAD_MB, MODEL_REPO, SupertonicEngine, download_model
 from .abbreviations_dialog import AbbreviationsDialog
 from .paragraph_view import ParagraphView
+from .search_bar import SearchBar
 from .settings_dialog import SettingsDialog
 from .tasks import BackgroundTask, run_background
 
@@ -119,6 +121,7 @@ class MainWindow(QMainWindow):
         self._loading = False
         self.ocr_mode = "off"
         self._current_text_position: tuple[int, int] | None = None  # (paragraph, segment) in the bottom pane
+        self._reading_time: ReadingTime | None = None
 
         self.bridge = _Bridge()
         self.bridge.position.connect(self._on_position)
@@ -189,8 +192,21 @@ class MainWindow(QMainWindow):
         self.sections_list.itemClicked.connect(self._section_activated)
         self.paragraph_view = ParagraphView()
         self.paragraph_view.doubleClicked.connect(lambda idx: self._seek_and_play(idx.row()))
+        # Ctrl+F search bar above the paragraphs
+        self.search_bar = SearchBar()
+        self.search_bar.start_row = self._search_start_row
+        self.search_bar.found.connect(self.paragraph_view.reveal)
+        self.search_bar.activated.connect(self._seek_and_play)
+        self.search_bar.closed.connect(self.paragraph_view.setFocus)
+        self.search_bar.hide()
+        text_pane = QWidget()
+        text_layout = QVBoxLayout(text_pane)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(4)
+        text_layout.addWidget(self.search_bar)
+        text_layout.addWidget(self.paragraph_view, 1)
         splitter.addWidget(self.sections_list)
-        splitter.addWidget(self.paragraph_view)
+        splitter.addWidget(text_pane)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 4)
         splitter.setSizes([230, 870])
@@ -297,11 +313,17 @@ class MainWindow(QMainWindow):
         self.speed_label = QLabel()
         self.speed_label.setMinimumWidth(42)
         self.speed_slider.valueChanged.connect(lambda v: self.speed_label.setText(f"{v / 100:.2f}×"))
+        self.speed_slider.valueChanged.connect(lambda _v: self._update_reading_time())
         self.speed_slider.sliderReleased.connect(self._speed_changed)
         self.speed_slider.valueChanged.connect(lambda _v: None if self.speed_slider.isSliderDown() else self._speed_changed())
         self.speed_label.setText(f"{self.settings.speed:.2f}×")
         controls.addWidget(self.speed_slider)
         controls.addWidget(self.speed_label)
+        self.duration_label = QLabel()
+        self.duration_label.setPalette(self.subtitle_label.palette())
+        self.duration_label.setToolTip("Орієнтовний час прослуховування за поточної швидкості й пауз "
+                                       "(з урахуванням вибраного діапазону сторінок).")
+        controls.addWidget(self.duration_label)
         controls.addStretch(1)
         root.addLayout(controls)
 
@@ -328,6 +350,8 @@ class MainWindow(QMainWindow):
         open_action = QAction("Відкрити…", self, shortcut=QKeySequence.Open, triggered=self.open_file_dialog)
         file_menu.addAction(open_action)
         self.recent_menu = file_menu.addMenu("Нещодавні")
+        find_action = QAction("Пошук у тексті…", self, shortcut=QKeySequence.Find, triggered=self.search_bar.open_bar)
+        file_menu.addAction(find_action)
         self._refresh_recent_menu()
         file_menu.addSeparator()
         self.export_section_action = QAction("Експортувати поточний розділ в аудіо…", self,
@@ -376,8 +400,8 @@ class MainWindow(QMainWindow):
     def _load_engine(self) -> None:
         self.status_label.setText("Завантаження моделі мовлення…")
         model_dir = Path(self.settings.model_dir)
-        steps = self.settings.quality_steps
-        run_background(SupertonicEngine, model_dir, steps,
+        steps, threads = self.settings.quality_steps, self.settings.synthesis_threads
+        run_background(SupertonicEngine, model_dir, steps, threads,
                        on_success=self._engine_ready, on_error=self._engine_failed)
 
     def _engine_ready(self, engine: TTSEngine) -> None:
@@ -583,6 +607,8 @@ class MainWindow(QMainWindow):
             self.sections_list.addItem(item)
         self.sections_list.setVisible(len(doc.sections) > 1)
         self.paragraph_view.model_.set_document(doc)
+        self._reading_time = ReadingTime([p.text for p in doc.paragraphs])
+        self.search_bar.set_texts([p.text for p in doc.paragraphs])
         self.progress_slider.setMaximum(max(len(doc.paragraphs) - 1, 0))
 
         self.pdf_row.setVisible(doc.format == "pdf" and (doc.page_count or 0) > 1)
@@ -602,6 +628,7 @@ class MainWindow(QMainWindow):
                 self.lang_combo.blockSignals(False)
         self._apply_voice_settings()
         self.controller.set_document(doc, paragraph, segment)
+        self._update_reading_time(paragraph)
         self._last_saved = (paragraph, segment, time.time())
         resumed = f" · продовжуємо з абзацу {doc.paragraph_number(paragraph)}" if paragraph else ""
         recognized = f" · розпізнано OCR: {doc.ocr_pages} стор." if doc.ocr_pages else ""
@@ -694,6 +721,22 @@ class MainWindow(QMainWindow):
             self._save_settings()
             self.controller.update_voice(voice=voice)
 
+    def _update_reading_time(self, paragraph: int | None = None) -> None:
+        """Listening time of the loaded text and of what is left from the current paragraph."""
+        estimate = self._reading_time
+        if estimate is None or not estimate.paragraphs:
+            self.duration_label.clear()
+            return
+        if paragraph is None:
+            paragraph = self.controller.position[0]
+        speed = self.speed_slider.value() / 100
+        pauses = (self.settings.sentence_pause, self.settings.paragraph_pause)
+        total = estimate.seconds(speed, *pauses)
+        text = f"≈ {format_duration(total)}"
+        if paragraph > 0:
+            text += f" · залишилось ≈ {format_duration(estimate.seconds(speed, *pauses, start=paragraph))}"
+        self.duration_label.setText(text)
+
     def _speed_changed(self) -> None:
         self._speed_timer.start()
 
@@ -715,6 +758,11 @@ class MainWindow(QMainWindow):
         self.controller.seek(paragraph)
         self.controller.play()
 
+    def _search_start_row(self) -> int:
+        """A new search starts at the selected paragraph, or at the one being read."""
+        index = self.paragraph_view.currentIndex()
+        return index.row() if index.isValid() else self.controller.position[0]
+
     def _section_activated(self, item: QListWidgetItem) -> None:
         self._seek(item.data(Qt.UserRole))
 
@@ -725,6 +773,7 @@ class MainWindow(QMainWindow):
         self.paragraph_view.highlight(paragraph, follow=True)
         if not self.progress_slider.isSliderDown():
             self.progress_slider.setValue(paragraph)
+        self._update_reading_time(paragraph)
         number, total = doc.paragraph_number(paragraph), doc.total_paragraphs
         percent = 100.0 * number / total
         parts = [f"Абзац {number} з {total} · {percent:.1f}%"]
@@ -811,11 +860,13 @@ class MainWindow(QMainWindow):
             except OSError as exc:
                 QMessageBox.critical(self, "Кеш", f"Не вдалося використати теку кешу:\n{exc}")
         self._apply_voice_settings()
+        self._update_reading_time()
         position = self._current_text_position
         if (new.current_text_font_size != old.current_text_font_size and position and self.document
                 and position[0] < len(self.document.paragraphs)):
             self._render_current_text(*position)
-        if (new.model_dir, new.quality_steps) != (old.model_dir, old.quality_steps):
+        if (new.model_dir, new.quality_steps, new.synthesis_threads) != (
+                old.model_dir, old.quality_steps, old.synthesis_threads):
             self.controller.stop()
             self.engine = None
             self._refresh_controls()

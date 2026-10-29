@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -40,6 +41,39 @@ def _disable_onnxruntime_telemetry() -> None:
         pass
 
 
+DEFAULT_THREADS = 3
+
+
+@contextmanager
+def _sessions_without_spinning():
+    """Make the ONNX sessions supertonic creates sleep between operations instead of busy-waiting.
+
+    supertonic builds its own ``SessionOptions`` and does not expose this option, so its loader
+    sees an ``onnxruntime`` whose SessionOptions has it set. Spinning threads kept several cores
+    at 100 % for no gain; with spinning off synthesis is as fast and uses about a third of the CPU.
+    """
+    import onnxruntime
+    import supertonic.loader as loader
+
+    class _Runtime:
+        def __getattr__(self, name):
+            return getattr(onnxruntime, name)
+
+        @staticmethod
+        def SessionOptions():  # noqa: N802 (mirrors the onnxruntime API)
+            options = onnxruntime.SessionOptions()
+            options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+            options.add_session_config_entry("session.inter_op.allow_spinning", "0")
+            return options
+
+    original = loader.ort
+    loader.ort = _Runtime()
+    try:
+        yield
+    finally:
+        loader.ort = original
+
+
 def model_present(model_dir: Path) -> bool:
     return all((model_dir / rel).is_file() for rel in _REQUIRED_FILES) and any(
         (model_dir / "voice_styles").glob("*.json"))
@@ -65,7 +99,10 @@ class SupertonicEngine(TTSEngine):
     natural_speed_min = 1.0
     natural_speed_max = 1.0
 
-    def __init__(self, model_dir: Path, quality_steps: int = 8):
+    def __init__(self, model_dir: Path, quality_steps: int = 8, threads: int = DEFAULT_THREADS):
+        """``threads``: CPU threads per operation, 0 lets ONNX Runtime decide. Operations run one after
+        another (inter-op 1): the default thread pools use every core, the slow efficiency cores too, and
+        on a 16-core laptop made synthesis 4× slower while loading the CPU to 90 %."""
         model_dir = Path(model_dir)
         if not model_present(model_dir):
             raise ModelMissingError(
@@ -78,7 +115,9 @@ class SupertonicEngine(TTSEngine):
         from supertonic import TTS
 
         try:
-            self._tts = TTS(model=MODEL_NAME, model_dir=model_dir, auto_download=False)
+            with _sessions_without_spinning():
+                self._tts = TTS(model=MODEL_NAME, model_dir=model_dir, auto_download=False,
+                                intra_op_num_threads=threads or None, inter_op_num_threads=1)
         except Exception as exc:
             raise TTSError(f"Не вдалося завантажити модель: {exc}") from exc
         self._model_dir = model_dir
@@ -87,7 +126,8 @@ class SupertonicEngine(TTSEngine):
         self._lock = threading.Lock()  # ONNX sessions are used from one worker at a time
         self.sample_rate = int(self._tts.sample_rate)
         self.engine_id = f"{MODEL_NAME}@{self._model_revision()}/steps{quality_steps}"
-        log.info("Supertonic loaded: sample_rate=%s voices=%s", self.sample_rate, self._tts.voice_style_names)
+        log.info("Supertonic loaded: sample_rate=%s threads=%s voices=%s", self.sample_rate, threads or "auto",
+                 self._tts.voice_style_names)
 
     def _model_revision(self) -> str:
         from supertonic.config import get_model_revision

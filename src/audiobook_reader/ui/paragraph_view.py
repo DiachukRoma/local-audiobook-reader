@@ -82,6 +82,15 @@ class ParagraphView(QListView):
             self._follow_tries = 0
             self._scroll_to_followed()
 
+    def reveal(self, row: int) -> None:
+        """Select a row (a search match) and scroll it to the middle of the view."""
+        if not 0 <= row < self.model_.rowCount():
+            return
+        self.setCurrentIndex(self.model_.index(row))
+        self._follow_row = row
+        self._follow_tries = 0
+        self._scroll_to_followed()
+
     def _scroll_to_followed(self) -> None:
         """Center the followed row. Right after a document is loaded the batched layout may not have
         reached it yet (empty rect, or a scroll range that still ends above it), so retry until the row

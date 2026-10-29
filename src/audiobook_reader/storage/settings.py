@@ -90,6 +90,7 @@ class Settings:
     voice: str = "F1"
     speed: float = 1.0
     quality_steps: int = 8
+    synthesis_threads: int = 3  # CPU threads for speech synthesis, 0 = automatic
     expand_numbers: bool = True
     bible_references: bool = True
     abbreviations: list[list[str]] = field(default_factory=lambda: [list(e) for e in DEFAULT_ABBREVIATIONS])
@@ -106,6 +107,7 @@ class Settings:
         settings = cls(**{k: v for k, v in raw.items() if k in known})
         settings.speed = min(max(float(settings.speed), SPEED_MIN), SPEED_MAX)
         settings.quality_steps = min(max(int(settings.quality_steps), 2), 32)
+        settings.synthesis_threads = min(max(int(settings.synthesis_threads), 0), 16)
         settings.current_text_height = min(max(int(settings.current_text_height), 50), 2000)
         settings.current_text_font_size = min(max(int(settings.current_text_font_size), FONT_SIZE_MIN), FONT_SIZE_MAX)
         if not settings.model_dir or (FROZEN and not Path(settings.model_dir).is_dir()):

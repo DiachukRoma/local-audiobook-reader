@@ -44,6 +44,9 @@ class SettingsDialog(QDialog):
         self.cache_max = QSpinBox(suffix=" МБ", minimum=100, maximum=200_000, singleStep=256, value=settings.cache_max_mb)
         self.steps = QSpinBox(minimum=4, maximum=16, value=settings.quality_steps)
         self.steps.setToolTip("Більше кроків — трохи якісніший звук, але повільніший синтез. Типово 8.")
+        self.threads = QSpinBox(minimum=0, maximum=16, value=settings.synthesis_threads, specialValueText="авто")
+        self.threads.setToolTip("Скільки ядер процесора використовує синтез мовлення. Типово 3: так само швидко, "
+                                "як і більше потоків, але процесор майже не навантажений.")
         self.expand = QCheckBox("Читати числа й скорочення словами (рекомендовано)")
         self.expand.setChecked(settings.expand_numbers)
         self.expand.setToolTip("Змінюється лише текст, що надсилається синтезатору; книжка не змінюється.")
@@ -60,6 +63,7 @@ class SettingsDialog(QDialog):
         form.addRow("Тека аудіокешу:", _path_row(self.cache_dir, self))
         form.addRow("Максимальний розмір кешу:", self.cache_max)
         form.addRow("Якість синтезу (кроки):", self.steps)
+        form.addRow("Потоки синтезу:", self.threads)
         form.addRow("Пауза між абзацами:", self.par_pause)
         form.addRow("Пауза між фрагментами:", self.sent_pause)
         form.addRow("Шрифт поточного абзацу:", self.font_size)
@@ -130,6 +134,7 @@ class SettingsDialog(QDialog):
             cache_dir=self.cache_dir.text().strip(),
             cache_max_mb=self.cache_max.value(),
             quality_steps=self.steps.value(),
+            synthesis_threads=self.threads.value(),
             expand_numbers=self.expand.isChecked(),
             bible_references=self.bible.isChecked(),
             paragraph_pause=round(self.par_pause.value(), 2),

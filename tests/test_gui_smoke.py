@@ -41,6 +41,14 @@ def test_open_document_and_restore_position(app, tmp_path, uk_paragraphs):
     assert window.title_label.text() == "книга"
     window.controller.seek(2)
     assert _wait(app, lambda: window.position_label.text().startswith("Абзац 3"))
+    # Listening time next to the speed slider: the whole text and what is left; it follows the speed.
+    assert _wait(app, lambda: "залишилось" in window.duration_label.text())
+    assert window.duration_label.text().startswith("≈ ")
+    window.speed_slider.setValue(100)
+    slow = window._reading_time.seconds(1.0, window.settings.sentence_pause, window.settings.paragraph_pause)
+    window.speed_slider.setValue(200)
+    fast = window._reading_time.seconds(2.0, window.settings.sentence_pause, window.settings.paragraph_pause)
+    assert fast < slow
     window.close()
 
     reopened = MainWindow(data)

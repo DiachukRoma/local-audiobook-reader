@@ -75,3 +75,15 @@ def test_onnxruntime_telemetry_is_disabled(monkeypatch):
     monkeypatch.setattr(onnxruntime, "disable_telemetry_events", lambda: calls.append(True))
     SupertonicEngine(DEFAULT_MODEL_DIR)
     assert calls
+
+
+def test_engine_uses_few_threads_without_spinning(engine):
+    import supertonic.loader
+    import onnxruntime
+
+    model = engine._tts.model
+    for session in (model.dp_ort, model.text_enc_ort, model.vector_est_ort, model.vocoder_ort):
+        options = session.get_session_options()
+        assert (options.intra_op_num_threads, options.inter_op_num_threads) == (3, 1)
+        assert options.get_session_config_entry("session.intra_op.allow_spinning") == "0"
+    assert supertonic.loader.ort is onnxruntime  # the loader patch is undone
