@@ -27,6 +27,69 @@ def _signature(text: str) -> str:
     return _DIGITS.sub("#", text.lower()).strip()
 
 
+_LETTERS = re.compile(r"[^\w]|[\d_]")
+_RUNNING_ZONE = 0.2  # scans often have wide margins: running lines may sit lower than _MARGIN
+_RUNNING_WINDOW = 8  # pages on each side compared (chapter titles repeat only within a chapter)
+_RUNNING_EDGE = 2  # blocks at the top / bottom of a page that may be running lines
+
+
+def _letters(text: str) -> str:
+    """Letters only, lowercased: page numbers, punctuation and spacing differ between pages."""
+    return _LETTERS.sub("", text.lower())
+
+
+def _similar(a: str, b: str) -> bool:
+    from difflib import SequenceMatcher
+
+    if a == b:
+        return True
+    # A few misread letters are tolerated; different words of similar lines are not.
+    allowed = max(2, (len(a) + len(b)) // 10)
+    if abs(len(a) - len(b)) > allowed:
+        return False
+    matcher = SequenceMatcher(None, a, b, autojunk=False)
+    return len(a) + len(b) - 2 * sum(block.size for block in matcher.get_matching_blocks()) <= allowed
+
+
+def _running_lines(pages: list[tuple[int, list[tuple[float, float, str]]]]) -> set[tuple[int, int]]:
+    """(page index, block index) of running headers/footers: short one-line blocks at the top or
+    bottom of a page whose text (ignoring numbers and small OCR differences) recurs at the same edge
+    of at least two other nearby pages. Taller blocks (a chapter heading in a larger font) are kept."""
+    edges: list[tuple[list[tuple[int, str]], list[tuple[int, str]]]] = []
+    for _, blocks in pages:
+        heights = [(y1 - y0) / (t.count("\n") + 1) for y0, y1, t in blocks if y1 > y0]
+        line_h = sorted(heights)[len(heights) // 2] if heights else 0.0
+
+        def candidate(block) -> str | None:
+            y0, y1, text = block
+            letters = _letters(text)
+            if "\n" in text.strip() or len(text) > 120 or len(letters) < 3:
+                return None
+            if line_h and y1 - y0 > 1.5 * line_h:
+                return None
+            return letters
+
+        top = [(i, s) for i, b in enumerate(blocks[:_RUNNING_EDGE])
+               if b[0] < _RUNNING_ZONE and (s := candidate(b))]
+        start = max(_RUNNING_EDGE, len(blocks) - _RUNNING_EDGE)
+        bottom = [(i, s) for i, b in enumerate(blocks[start:], start)
+                  if b[1] > 1 - _RUNNING_ZONE and (s := candidate(b))]
+        edges.append((top, bottom))
+
+    running: set[tuple[int, int]] = set()
+    for p, page_edges in enumerate(edges):
+        for side, items in enumerate(page_edges):
+            for index, letters in items:
+                matches = 0
+                for q in range(max(0, p - _RUNNING_WINDOW), min(len(edges), p + _RUNNING_WINDOW + 1)):
+                    if q != p and any(_similar(letters, other) for _i, other in edges[q][side]):
+                        matches += 1
+                        if matches >= 2:
+                            running.add((p, index))
+                            break
+    return running
+
+
 def _page_blocks(page) -> list[tuple[float, float, str]]:
     """Return (y0, y1, text) for every text block of a page in reading order."""
     height = page.rect.height or 1
@@ -156,16 +219,25 @@ def _build_paragraphs(pages: list[tuple[int, list[tuple[float, float, str]]]]) -
     for _, blocks in pages:
         seen = {_signature(t) for y0, y1, t in blocks if y1 <= _MARGIN or y0 >= 1 - _MARGIN}
         margin_counts.update(seen)
-    threshold = max(3, int(len(pages) * 0.3))
+    # Pages without text (unrecognized scans outside an OCR range) do not count.
+    threshold = max(3, int(sum(1 for _, blocks in pages if blocks) * 0.3))
     repeated = {sig for sig, count in margin_counts.items() if count >= threshold}
+    running = _running_lines(pages)
 
     paragraphs: list[Paragraph] = []
     last_pages: list[int] = []
-    for number, blocks in pages:
+    for page_index, (number, blocks) in enumerate(pages):
         first_kept = True
-        for y0, y1, raw in blocks:
+        for block_index, (y0, y1, raw) in enumerate(blocks):
             in_margin = y1 <= _MARGIN or y0 >= 1 - _MARGIN
             if in_margin and (_signature(raw) in repeated or _PAGE_NUMBER.match(raw)):
+                continue
+            if (page_index, block_index) in running:
+                continue
+            # A bare page number as the first or last block, even outside the narrow margin (scans).
+            at_edge = (block_index == 0 and y0 < _RUNNING_ZONE) or (
+                block_index == len(blocks) - 1 and y1 > 1 - _RUNNING_ZONE)
+            if at_edge and _PAGE_NUMBER.match(raw):
                 continue
             text = normalize_text(raw)
             if not is_readable(text):

@@ -188,3 +188,58 @@ def test_russian_pdf(tmp_path, ru_paragraphs):
     doc = load_document(path)
     assert [p.text for p in doc.paragraphs] == ru_paragraphs
     assert doc.language == "ru"
+
+
+def _ocr_page(number, header, body, footer=None):
+    """Blocks as OCR returns them: (top, bottom, text), normalized; running line below the 9 % margin."""
+    blocks = [(0.12, 0.135, header)] if header else []
+    y = 0.2
+    for text in body:
+        blocks.append((y, y + 0.06, text))
+        y += 0.1
+    if footer:
+        blocks.append((0.86, 0.875, footer))
+    return number, blocks
+
+
+def test_running_headers_from_ocr_are_skipped():
+    from audiobook_reader.document.pdf import _build_paragraphs
+
+    pages = []
+    for n in range(1, 13):
+        chapter = "РОЗДІЛ ПЕРШИЙ. ДОРОГА" if n <= 6 else "Розділ другий. Повернення"
+        # Even pages: book title with OCR noise; odd pages: chapter title; page number in the footer.
+        header = (f"{n} ТИХА РІКА" if n % 4 else f"{n} ТИХA РIКА.") if n % 2 == 0 else f"{chapter} {n}"
+        pages.append(_ocr_page(n, header, [f"Абзац сторінки {n}.\nДругий рядок абзацу."], footer=f"— {n} —"))
+    # The opening page of chapter two: a large heading at the top is part of the text.
+    pages[6] = (7, [(0.12, 0.17, "Розділ другий. Повернення")] + pages[6][1][1:])
+
+    paragraphs, _ = _build_paragraphs(pages)
+    texts = [p.text for p in paragraphs]
+    assert not any("РІКА" in t.upper().replace("I", "І").replace("A", "А") for t in texts)
+    assert not any("ПЕРШИЙ" in t for t in texts)
+    assert texts.count("Розділ другий. Повернення") == 1
+    assert not any("—" in t for t in texts)
+    assert len([t for t in texts if t.startswith("Абзац")]) == 12
+
+
+def test_running_headers_in_short_ocr_range_of_long_book():
+    from audiobook_reader.document.pdf import _build_paragraphs
+
+    # 4 recognized pages inside a 100-page scan: the other pages have no text.
+    pages = [(n, []) for n in range(1, 101)]
+    for n in range(40, 44):
+        pages[n - 1] = _ocr_page(n, "Тиха ріка", [f"Абзац сторінки {n}."])
+    texts = [p.text for p in _build_paragraphs(pages)[0]]
+    assert texts == [f"Абзац сторінки {n}." for n in range(40, 44)]
+
+
+def test_similar_first_lines_of_ordinary_pages_are_kept():
+    from audiobook_reader.document.pdf import _build_paragraphs
+
+    # One-line first blocks in the top zone that differ from page to page are text, not headers.
+    first_lines = ["Ранок почався з дощу.", "Він мовчав.", "Наступного дня все змінилось.",
+                   "Мати чекала біля воріт.", "Ніхто не знав відповіді."]
+    pages = [_ocr_page(n, first_lines[n - 1], ["Ще абзац."]) for n in range(1, 6)]
+    texts = [p.text for p in _build_paragraphs(pages)[0]]
+    assert texts[::2] == first_lines
