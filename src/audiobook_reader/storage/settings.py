@@ -99,6 +99,8 @@ class Settings:
     recent_files: list[str] = field(default_factory=list)
     current_text_height: int = 120
     current_text_font_size: int = 15  # px, the paragraph being read (bottom pane)
+    ocr_language: str = "uk"  # language last chosen for text recognition: uk | ru
+    reopen_last: bool = True  # reopen the last book at startup; off after the user closed it
 
     @classmethod
     def load(cls, path: Path) -> "Settings":
@@ -114,6 +116,8 @@ class Settings:
             settings.model_dir = str(DEFAULT_MODEL_DIR)
         if settings.language not in ("auto", "uk", "ru"):
             settings.language = "auto"
+        if settings.ocr_language not in ("uk", "ru"):
+            settings.ocr_language = "uk"
         settings.abbreviations = [
             [str(e[0]), str(e[1]), e[2] if len(e) > 2 and e[2] in ("all", "uk", "ru") else "all"]
             for e in settings.abbreviations if isinstance(e, (list, tuple)) and len(e) >= 2]
@@ -155,6 +159,7 @@ class Progress:
     page_range: list[int] | None = None
     paragraph_count: int = 0
     ocr_mode: str | None = None  # "scans" / "all" when the PDF was read via OCR
+    ocr_language: str | None = None  # "uk" / "ru": the language the scan was recognized in
     updated: float = 0.0
 
 

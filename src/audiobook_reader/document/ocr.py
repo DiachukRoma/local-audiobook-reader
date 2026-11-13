@@ -15,6 +15,7 @@ import re
 import statistics
 import sys
 import threading
+import unicodedata
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -42,6 +43,10 @@ class OcrCancelled(Exception):
 
 def clean_ocr_text(text: str) -> str:
     """Fix typical OCR artefacts in Cyrillic text without touching genuine Latin words."""
+    # Compose "е" + combining diaeresis into "ё" (and "и" + breve into "й") before combining marks
+    # left over from OCR are stripped below.
+    text = unicodedata.normalize("NFC", text)
+
     def fix(match: re.Match) -> str:
         word = match.group(0)
         if not _CYRILLIC.search(word):

@@ -11,10 +11,10 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QPointF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter, QShortcut
-from PySide6.QtWidgets import (QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-                               QMainWindow, QMessageBox, QProgressDialog, QPushButton, QSlider,
-                               QSpinBox, QSplitter, QSplitterHandle, QStatusBar, QStyle, QTextBrowser, QToolButton,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QComboBox, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFrame, QHBoxLayout,
+                               QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QProgressDialog,
+                               QPushButton, QSlider, QSpinBox, QSplitter, QSplitterHandle, QStatusBar, QStyle,
+                               QTextBrowser, QToolButton, QVBoxLayout, QWidget)
 
 from ..audio.cache import AudioCache
 from ..document import SUPPORTED_EXTENSIONS, Document, ScannedPdfError, load_document
@@ -37,6 +37,8 @@ log = logging.getLogger(__name__)
 APP_NAME = "Local Audiobook Reader"
 AUTHOR = "Roman Diachuk"
 LANG_LABELS = {"uk": "Українська", "ru": "Русский"}
+EMPTY_TITLE = "Відкрийте книжку або перетягніть файл у це вікно"
+EMPTY_SUBTITLE = "Підтримуються PDF, EPUB, TXT і DOCX · українська та російська мови"
 STATE_LABELS = {"stopped": "Зупинено", "buffering": "Генерування мовлення…", "playing": "Читання",
                 "paused": "Пауза", "finished": "Книжку дочитано"}
 FILE_FILTER = "Книжки (*.pdf *.epub *.txt *.docx);;PDF (*.pdf);;EPUB (*.epub);;Текст (*.txt);;Word (*.docx)"
@@ -120,6 +122,7 @@ class MainWindow(QMainWindow):
         self._last_saved = (-1, -1, 0.0)
         self._loading = False
         self.ocr_mode = "off"
+        self.ocr_language: str | None = None
         self._current_text_position: tuple[int, int] | None = None  # (paragraph, segment) in the bottom pane
         self._reading_time: ReadingTime | None = None
 
@@ -150,13 +153,13 @@ class MainWindow(QMainWindow):
         # Header: title + open button
         header = QHBoxLayout()
         title_box = QVBoxLayout()
-        self.title_label = QLabel("Відкрийте книжку або перетягніть файл у це вікно")
+        self.title_label = QLabel(EMPTY_TITLE)
         font = self.title_label.font()
         font.setPointSizeF(font.pointSizeF() + 6)
         font.setBold(True)
         self.title_label.setFont(font)
         self.title_label.setWordWrap(True)
-        self.subtitle_label = QLabel("Підтримуються PDF, EPUB, TXT і DOCX · українська та російська мови")
+        self.subtitle_label = QLabel(EMPTY_SUBTITLE)
         muted = self.subtitle_label.palette()
         dim = muted.color(muted.ColorRole.WindowText)
         dim.setAlpha(150)
@@ -277,12 +280,12 @@ class MainWindow(QMainWindow):
             controls.addWidget(button)
             return button
 
-        self.prev_button = tool(QStyle.SP_MediaSkipBackward, "Попередній абзац (⌘←)", self.controller.previous_paragraph)
+        self.prev_button = tool(QStyle.SP_MediaSkipBackward, "Попереднє речення (⌘←)", self.controller.previous_sentence)
         self.replay_button = tool(QStyle.SP_BrowserReload, "Повторити абзац (⌘R)", self.controller.replay_paragraph)
         self.play_button = tool(QStyle.SP_MediaPlay, "Читати / пауза (пробіл)", self.controller.toggle, "Читати")
         self.play_button.setMinimumWidth(110)
         self.stop_button = tool(QStyle.SP_MediaStop, "Зупинити", self.controller.stop)
-        self.next_button = tool(QStyle.SP_MediaSkipForward, "Наступний абзац (⌘→)", self.controller.next_paragraph)
+        self.next_button = tool(QStyle.SP_MediaSkipForward, "Наступне речення (⌘→)", self.controller.next_sentence)
         controls.addSpacing(16)
 
         controls.addWidget(QLabel("Мова:"))
@@ -310,15 +313,21 @@ class MainWindow(QMainWindow):
         self.speed_slider.setToolTip("Швидкість читання 0,7×–3×. Найчистіше звучання — до 2×; "
                                      "на 2,5–3× мовлення дуже стиснуте.")
         self.speed_slider.setValue(int(round(self.settings.speed * 100)))
-        self.speed_label = QLabel()
-        self.speed_label.setMinimumWidth(42)
-        self.speed_slider.valueChanged.connect(lambda v: self.speed_label.setText(f"{v / 100:.2f}×"))
+        self.speed_spin = QDoubleSpinBox()
+        self.speed_spin.setRange(SPEED_MIN, SPEED_MAX)
+        self.speed_spin.setDecimals(2)
+        self.speed_spin.setSingleStep(0.05)
+        self.speed_spin.setSuffix("×")
+        self.speed_spin.setKeyboardTracking(False)  # apply after Enter / focus out, not on every keystroke
+        self.speed_spin.setToolTip(self.speed_slider.toolTip())
+        self.speed_spin.setValue(self.settings.speed)
+        self.speed_slider.valueChanged.connect(self._sync_speed_spin)
+        self.speed_spin.valueChanged.connect(lambda v: self.speed_slider.setValue(int(round(v * 100))))
         self.speed_slider.valueChanged.connect(lambda _v: self._update_reading_time())
         self.speed_slider.sliderReleased.connect(self._speed_changed)
         self.speed_slider.valueChanged.connect(lambda _v: None if self.speed_slider.isSliderDown() else self._speed_changed())
-        self.speed_label.setText(f"{self.settings.speed:.2f}×")
         controls.addWidget(self.speed_slider)
-        controls.addWidget(self.speed_label)
+        controls.addWidget(self.speed_spin)
         self.duration_label = QLabel()
         self.duration_label.setPalette(self.subtitle_label.palette())
         self.duration_label.setToolTip("Орієнтовний час прослуховування за поточної швидкості й пауз "
@@ -335,8 +344,10 @@ class MainWindow(QMainWindow):
         self.author_label.setPalette(self.subtitle_label.palette())
         self.statusBar().addPermanentWidget(self.author_label)
 
-        for keys, slot in (("Space", self.controller.toggle), ("Ctrl+Right", self.controller.next_paragraph),
-                           ("Ctrl+Left", self.controller.previous_paragraph), ("Ctrl+R", self.controller.replay_paragraph),
+        for keys, slot in (("Space", self.controller.toggle), ("Ctrl+Right", self.controller.next_sentence),
+                           ("Ctrl+Left", self.controller.previous_sentence),
+                           ("Ctrl+Shift+Right", self.controller.next_paragraph),
+                           ("Ctrl+Shift+Left", self.controller.previous_paragraph), ("Ctrl+R", self.controller.replay_paragraph),
                            ("Ctrl+.", self.controller.stop)):
             shortcut = QShortcut(QKeySequence(keys), self)
             shortcut.setContext(Qt.WindowShortcut)
@@ -350,6 +361,9 @@ class MainWindow(QMainWindow):
         open_action = QAction("Відкрити…", self, shortcut=QKeySequence.Open, triggered=self.open_file_dialog)
         file_menu.addAction(open_action)
         self.recent_menu = file_menu.addMenu("Нещодавні")
+        self.close_action = QAction("Закрити поточний файл", self, shortcut=QKeySequence.Close,
+                                    triggered=self.close_document)
+        file_menu.addAction(self.close_action)
         find_action = QAction("Пошук у тексті…", self, shortcut=QKeySequence.Find, triggered=self.search_bar.open_bar)
         file_menu.addAction(find_action)
         self._refresh_recent_menu()
@@ -372,8 +386,10 @@ class MainWindow(QMainWindow):
 
         play_menu = self.menuBar().addMenu("Відтворення")
         for text, keys, slot in (("Читати / пауза", "Space", self.controller.toggle),
-                                 ("Наступний абзац", "Ctrl+Right", self.controller.next_paragraph),
-                                 ("Попередній абзац", "Ctrl+Left", self.controller.previous_paragraph),
+                                 ("Наступне речення", "Ctrl+Right", self.controller.next_sentence),
+                                 ("Попереднє речення", "Ctrl+Left", self.controller.previous_sentence),
+                                 ("Наступний абзац", "Ctrl+Shift+Right", self.controller.next_paragraph),
+                                 ("Попередній абзац", "Ctrl+Shift+Left", self.controller.previous_paragraph),
                                  ("Повторити абзац", "Ctrl+R", self.controller.replay_paragraph),
                                  ("Зупинити", "Ctrl+.", self.controller.stop)):
             action = QAction(f"{text}\t{QKeySequence(keys).toString(QKeySequence.NativeText)}", self)
@@ -392,6 +408,7 @@ class MainWindow(QMainWindow):
         self.export_section_action.setEnabled(enabled)
         self.export_book_action.setEnabled(enabled)
         self.ocr_action.setEnabled(self.document is not None and self.document.format == "pdf")
+        self.close_action.setEnabled(self.document is not None and not self._loading)
 
     def _refresh_controls(self) -> None:
         self._set_controls_enabled(self.document is not None and self.engine is not None)
@@ -465,15 +482,16 @@ class MainWindow(QMainWindow):
 
     def restore_last_document(self) -> None:
         """At startup: reopen the book read last time, unless a document is already open or opening."""
-        if self.document is not None or self._loading:
+        if self.document is not None or self._loading or not self.settings.reopen_last:
             return
         last = next((Path(p) for p in self.settings.recent_files[:1] if Path(p).is_file()), None)
         if last is not None:
             self.open_path(last)
 
     def open_path(self, path: Path, page_range: tuple[int, int] | None = None, use_saved_range: bool = True,
-                  ocr_mode: str | None = None) -> None:
-        """Open a document in the background. ``ocr_mode``: None (as saved), "off", "scans" or "all"."""
+                  ocr_mode: str | None = None, ocr_language: str | None = None) -> None:
+        """Open a document in the background. ``ocr_mode``: None (as saved), "off", "scans" or "all";
+        ``ocr_language``: None (as saved) or the language of the scanned text, "uk" or "ru"."""
         if self._loading:
             return
         self._loading = True
@@ -490,12 +508,16 @@ class MainWindow(QMainWindow):
             if rng is None and use_saved_range and progress and progress.page_range:
                 rng = tuple(progress.page_range)
             mode = ocr_mode or (progress.ocr_mode if progress and progress.ocr_mode else "off")
+            language = ocr_language or (progress.ocr_language if progress and progress.ocr_language else None)
             ocr = None
             if mode in ("scans", "all") and path.suffix.lower() == ".pdf":
-                ocr = create_ocr(self._ocr_languages(), self.data_dir / "ocr-cache", fingerprint)
+                language = language or self.settings.ocr_language
+                ocr = create_ocr((language,), self.data_dir / "ocr-cache", fingerprint)
+            else:
+                language = None
             doc = load_document(path, rng, ocr=ocr, ocr_all=mode == "all",
                                 progress=lambda done, total: task.progress.emit(done, total), cancel=cancel)
-            return doc, fingerprint, progress, mode
+            return doc, fingerprint, progress, mode, language
 
         task = BackgroundTask(work)
         if ocr_mode in ("scans", "all"):
@@ -528,9 +550,6 @@ class MainWindow(QMainWindow):
         task.failed.connect(failed)
         task.start()
 
-    def _ocr_languages(self) -> tuple[str, ...]:
-        return ("ru", "uk") if self.lang_combo.currentData() == "ru" else ("uk", "ru")
-
     def _offer_ocr(self, path: Path, pages: int, all_pages_option: bool = False) -> None:
         if not ocr_available():
             QMessageBox.warning(self, "Розпізнавання недоступне",
@@ -553,13 +572,54 @@ class MainWindow(QMainWindow):
             scans = box.addButton("Розпізнати", QMessageBox.AcceptRole)
             every = None
         box.addButton("Скасувати", QMessageBox.RejectRole)
+
+        # Recognition is tuned to one language: e.g. Ukrainian has no "ё" and would read it as "е".
+        language_row = QWidget(box)
+        row = QHBoxLayout(language_row)
+        row.setContentsMargins(0, 8, 0, 0)
+        row.addWidget(QLabel("Мова тексту для розпізнавання:"))
+        language_combo = QComboBox()
+        language_combo.addItem("Українська", "uk")
+        language_combo.addItem("Русский", "ru")
+        language_combo.setCurrentIndex(max(language_combo.findData(self._default_ocr_language(path)), 0))
+        row.addWidget(language_combo)
+        row.addStretch(1)
+        # Place the selector above the buttons: move the button box one row down.
+        layout = box.layout()
+        buttons = box.findChild(QDialogButtonBox)
+        index = layout.indexOf(buttons) if buttons is not None else -1
+        if index >= 0:
+            row_at, col, _rows, cols = layout.getItemPosition(index)
+            layout.removeWidget(buttons)
+            layout.addWidget(language_row, row_at, col, 1, cols)
+            layout.addWidget(buttons, row_at + 1, col, 1, cols)
+        else:
+            layout.addWidget(language_row, layout.rowCount(), 0, 1, layout.columnCount())
+
         box.exec()
         clicked = box.clickedButton()
         if clicked is None or clicked not in (scans, every):
             return
         mode = "all" if clicked is every else "scans"
+        language = language_combo.currentData()
+        self.settings.ocr_language = language
+        self._save_settings()
         rng = self.document.page_range if self.document and self.document.path == path else None
-        self.open_path(path, page_range=rng, use_saved_range=rng is None, ocr_mode=mode)
+        self.open_path(path, page_range=rng, use_saved_range=rng is None, ocr_mode=mode, ocr_language=language)
+
+    def _default_ocr_language(self, path: Path) -> str:
+        """Language preselected in the OCR dialog: the one this document was recognized in,
+        then the reading language chosen in the toolbar, the detected one, the last used one."""
+        if self.document and self.document.path == path:
+            if self.ocr_language:
+                return self.ocr_language
+            if self.lang_combo.currentData() in ("uk", "ru"):
+                return self.lang_combo.currentData()
+            if self.document.language in ("uk", "ru"):
+                return self.document.language
+        elif self.lang_combo.currentData() in ("uk", "ru"):
+            return self.lang_combo.currentData()
+        return self.settings.ocr_language
 
     def ocr_current_document(self) -> None:
         doc = self.document
@@ -581,13 +641,15 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Помилка відкриття", f"Не вдалося відкрити «{path.name}»:\n{exc}")
 
     def _document_loaded(self, result) -> None:
-        doc, fingerprint, progress, ocr_mode = result
+        doc, fingerprint, progress, ocr_mode, ocr_language = result
         log.info("Document opened: %s, %d paragraphs", doc.format, len(doc.paragraphs))
         self._loading = False
         self.ocr_mode = ocr_mode
+        self.ocr_language = ocr_language
         self.unsetCursor()
         self.document, self.fingerprint = doc, fingerprint
         self.settings.add_recent(str(doc.path))
+        self.settings.reopen_last = True
         self._save_settings()
         self._refresh_recent_menu()
 
@@ -631,7 +693,8 @@ class MainWindow(QMainWindow):
         self._update_reading_time(paragraph)
         self._last_saved = (paragraph, segment, time.time())
         resumed = f" · продовжуємо з абзацу {doc.paragraph_number(paragraph)}" if paragraph else ""
-        recognized = f" · розпізнано OCR: {doc.ocr_pages} стор." if doc.ocr_pages else ""
+        ocr_lang = f", мова: {LANG_LABELS[self.ocr_language]}" if self.ocr_language in LANG_LABELS else ""
+        recognized = f" · розпізнано OCR: {doc.ocr_pages} стор.{ocr_lang}" if doc.ocr_pages else ""
         self.status_label.setText(f"Документ відкрито{recognized}{resumed}")
         self._refresh_controls()
         self._save_progress(force=True)
@@ -641,6 +704,38 @@ class MainWindow(QMainWindow):
                 f"Файл → Розпізнати текст (OCR)…", 15000)
         if doc.language is None:
             self.status_label.setText("Увага: у тексті майже немає кирилиці. Синтез розрахований на українську та російську.")
+
+    def close_document(self) -> None:
+        """Close the book being read (its position is saved) and return to the empty start screen."""
+        if self.document is None or self._loading:
+            return
+        self._save_progress(force=True)
+        self.controller.close_document()
+        self.document, self.fingerprint = None, None
+        self.ocr_mode, self.ocr_language = "off", None
+        self._last_saved = (-1, -1, 0.0)
+        self._current_text_position = None
+        self._reading_time = None
+        self.settings.reopen_last = False
+        self._save_settings()
+
+        self.title_label.setText(EMPTY_TITLE)
+        self.subtitle_label.setText(EMPTY_SUBTITLE)
+        self.sections_list.clear()
+        self.sections_list.setVisible(True)
+        self.paragraph_view.model_.set_document(None)
+        self.search_bar.set_texts([])
+        if self.search_bar.isVisible():
+            self.search_bar.close_bar()
+        self.current_text.clear()
+        self.progress_slider.setMaximum(0)
+        self.position_label.setText("—")
+        self.duration_label.clear()
+        self.pdf_row.hide()
+        self._update_auto_language_label()
+        self._apply_voice_settings()
+        self.status_label.setText("Документ закрито")
+        self._refresh_controls()
 
     def _apply_page_range(self) -> None:
         if not self.document:
@@ -657,7 +752,8 @@ class MainWindow(QMainWindow):
             progress.paragraph = progress.segment = 0
             progress.paragraph_count = -1  # paragraphs differ for a new range: start at its beginning
             self.progress_store.set(self.fingerprint, progress)
-        self.open_path(self.document.path, page_range=rng, use_saved_range=False, ocr_mode=self.ocr_mode)
+        self.open_path(self.document.path, page_range=rng, use_saved_range=False, ocr_mode=self.ocr_mode,
+                       ocr_language=self.ocr_language)
 
     def _refresh_recent_menu(self) -> None:
         self.recent_menu.clear()
@@ -736,6 +832,12 @@ class MainWindow(QMainWindow):
         if paragraph > 0:
             text += f" · залишилось ≈ {format_duration(estimate.seconds(speed, *pauses, start=paragraph))}"
         self.duration_label.setText(text)
+
+    def _sync_speed_spin(self, value: int) -> None:
+        if int(round(self.speed_spin.value() * 100)) != value:
+            self.speed_spin.blockSignals(True)
+            self.speed_spin.setValue(value / 100)
+            self.speed_spin.blockSignals(False)
 
     def _speed_changed(self) -> None:
         self._speed_timer.start()
@@ -838,7 +940,8 @@ class MainWindow(QMainWindow):
                 paragraph=paragraph, segment=segment, language=self.lang_combo.currentData(),
                 voice=self.settings.voice,
                 page_range=list(self.document.page_range) if self.document.page_range else None,
-                paragraph_count=len(self.document.paragraphs), ocr_mode=self.ocr_mode))
+                paragraph_count=len(self.document.paragraphs), ocr_mode=self.ocr_mode,
+                ocr_language=self.ocr_language))
             self._last_saved = (paragraph, segment, time.time())
         except OSError as exc:
             self.statusBar().showMessage(f"Не вдалося зберегти позицію: {exc}", 6000)

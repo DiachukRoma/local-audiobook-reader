@@ -52,6 +52,7 @@ def test_long_sentence_prefers_clause_boundaries():
 def test_segments_group_short_sentences():
     para = "Так. Ні. Можливо. Побачимо завтра."
     assert split_segments(para, max_chars=200) == [para]
+    assert split_segments(para, merge=False) == ["Так.", "Ні.", "Можливо.", "Побачимо завтра."]
 
 
 def test_empty_and_whitespace():

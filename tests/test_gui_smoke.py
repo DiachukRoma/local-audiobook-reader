@@ -64,7 +64,23 @@ def test_open_document_and_restore_position(app, tmp_path, uk_paragraphs):
     assert _wait(app, lambda: restarted.document is not None)
     assert restarted.document.path == book
     assert restarted.controller.position == (2, 0)
+
+    # Closing the book returns to the empty screen; its position is kept for the next opening.
+    restarted.close_document()
+    assert restarted.document is None and restarted.controller.document is None
+    assert restarted.paragraph_view.model_.rowCount() == 0
+    assert not restarted.play_button.isEnabled() and not restarted.close_action.isEnabled()
     restarted.close()
+
+    # A book closed by the user is not reopened at the next start.
+    empty = MainWindow(data)
+    empty.restore_last_document()
+    assert empty.document is None and not empty._loading
+    empty.open_path(book)
+    assert _wait(app, lambda: empty.document is not None)
+    assert empty.controller.position == (2, 0)
+    assert empty.close_action.isEnabled()
+    empty.close()
 
 
 def test_no_last_document_to_restore(app, tmp_path):

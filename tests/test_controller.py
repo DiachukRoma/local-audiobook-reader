@@ -106,7 +106,7 @@ def test_reads_all_segments_in_order(tmp_path, paragraphs):
     h.ctl.play()
     h.play_through()
     assert h.ctl.status == "finished"
-    assert engine.calls == ["Перший абзац. Друге речення.", "Другий абзац.", "Третій абзац — останній."]
+    assert engine.calls == ["Перший абзац.", "Друге речення.", "Другий абзац.", "Третій абзац — останній."]
     heard = [p for p in h.positions if p != (0, 0)]
     assert heard[-1] == (2, 0)
     assert "buffering" in h.states and "playing" in h.states
@@ -137,6 +137,24 @@ def test_seek_and_navigation(tmp_path, paragraphs):
     assert h.ctl.position == (2, 0)
     h.ctl.seek(-5)
     assert h.ctl.position == (0, 0)
+    h.ctl.shutdown()
+
+
+def test_sentence_navigation(tmp_path, paragraphs):
+    h = Harness(tmp_path, FakeEngine(), paragraphs)
+    assert h.ctl.segments(0) == ["Перший абзац.", "Друге речення."]  # one sentence per segment
+    h.ctl.next_sentence()
+    assert h.ctl.position == (0, 1)
+    h.ctl.next_sentence()  # crosses into the next paragraph
+    assert h.ctl.position == (1, 0)
+    h.ctl.previous_sentence()  # back to the last sentence of the previous paragraph
+    assert h.ctl.position == (0, 1)
+    h.ctl.previous_sentence()
+    h.ctl.previous_sentence()  # clamps at the start
+    assert h.ctl.position == (0, 0)
+    h.ctl.seek(2)
+    h.ctl.next_sentence()  # clamps at the end
+    assert h.ctl.position == (2, 0)
     h.ctl.shutdown()
 
 

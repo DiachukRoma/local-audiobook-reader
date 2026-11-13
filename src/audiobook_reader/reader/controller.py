@@ -160,6 +160,20 @@ class ReaderController:
             self._set_status_locked("stopped")
         self.events.on_position(paragraph, segment)
 
+    def close_document(self) -> None:
+        """Stop playback and forget the document."""
+        with self._cond:
+            self._st.playing = False
+            self.document = None
+            self._st.segments.clear()
+            self._st.position = (0, 0)
+            self._invalidate_locked()
+            if self._player:
+                self._player.close()
+                self._player = None
+            self._set_status_locked("stopped")
+            self._cond.notify_all()
+
     def update_voice(self, **changes) -> None:
         """Change language/voice/speed/etc. Upcoming audio is regenerated from the current segment."""
         with self._cond:
@@ -254,6 +268,27 @@ class ReaderController:
         # Like a music player: first press restarts the paragraph if we are inside it.
         self.seek(paragraph if segment > 0 else paragraph - 1)
 
+    def next_sentence(self) -> None:
+        with self._cond:
+            if self.document is None or not self.document.paragraphs:
+                return
+            target = self._advance_locked(self._st.position)
+        if target is not None:
+            self.seek(*target)
+
+    def previous_sentence(self) -> None:
+        with self._cond:
+            if self.document is None or not self.document.paragraphs:
+                return
+            paragraph, segment = self._st.position
+            if segment > 0:
+                target = (paragraph, segment - 1)
+            elif paragraph > 0:
+                target = (paragraph - 1, len(self._segments_locked(paragraph - 1)) - 1)
+            else:
+                target = (0, 0)
+        self.seek(*target)
+
     def replay_paragraph(self) -> None:
         self.seek(self._st.position[0])
 
@@ -272,7 +307,7 @@ class ReaderController:
         segs = self._st.segments.get(paragraph)
         if segs is None:
             text = self.document.paragraphs[paragraph].text if self.document else ""
-            segs = split_segments(text) or [text]
+            segs = split_segments(text, merge=False) or [text]
             if len(self._st.segments) > 2000:
                 self._st.segments.clear()
             self._st.segments[paragraph] = segs

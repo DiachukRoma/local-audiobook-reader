@@ -34,6 +34,7 @@ def test_clean_ocr_text_fixes_artifacts():
     assert clean_ocr_text("Cонце i небо") == "Сонце i небо"  # lone Latin "i" word kept
     assert clean_ocr_text("Python та C++") == "Python та C++"  # real Latin words untouched
     assert clean_ocr_text("Ёжик, їжак, ґанок") == "Ёжик, їжак, ґанок"
+    assert clean_ocr_text("Е\u0308жик и\u0306од") == "Ёжик йод"  # decomposed ё/й are composed, not stripped
 
 
 def test_group_lines_into_paragraphs():

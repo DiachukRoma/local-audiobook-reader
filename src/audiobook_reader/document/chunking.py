@@ -101,16 +101,18 @@ def _split_long(sentence: str, max_chars: int) -> list[str]:
     return pieces
 
 
-def split_segments(paragraph: str, max_chars: int = DEFAULT_MAX_CHARS) -> list[str]:
+def split_segments(paragraph: str, max_chars: int = DEFAULT_MAX_CHARS, merge: bool = True) -> list[str]:
     """Group sentences of a paragraph into segments of at most ``max_chars`` characters.
 
-    A sentence is only split further when it alone exceeds ``max_chars``.
+    A sentence is only split further when it alone exceeds ``max_chars``. With ``merge=False``
+    every sentence is its own segment (so playback can step sentence by sentence).
     """
     segments: list[str] = []
     current = ""
     for sentence in split_sentences(paragraph):
-        for piece in _split_long(sentence, max_chars):
-            if current and len(current) + 1 + len(piece) > max_chars:
+        for index, piece in enumerate(_split_long(sentence, max_chars)):
+            starts_sentence = index == 0
+            if current and (len(current) + 1 + len(piece) > max_chars or (not merge and starts_sentence)):
                 segments.append(current)
                 current = piece
             else:
