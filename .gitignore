@@ -11,3 +11,5 @@ scratch/
 .DS_Store
 dist/
 build/
+xcuserdata/
+*.xcuserstate
