@@ -246,3 +246,44 @@ def test_current_paragraph_font_size_setting(app, tmp_path, monkeypatch, uk_para
     assert "font-size:26px" in window.current_text.toHtml().replace(" ", "")
     assert Settings.load(data / "settings.json").current_text_font_size == 26
     window.close()
+
+
+def test_current_paragraph_pane_follows_the_sentence(app, tmp_path):
+    from PySide6.QtGui import QTextCursor
+
+    from audiobook_reader.storage.settings import Settings
+    from audiobook_reader.ui.main_window import MainWindow
+
+    data = tmp_path / "data"
+    data.mkdir()
+    Settings(cache_dir=str(tmp_path / "cache"), current_text_font_size=40,
+             current_text_height=80).save(data / "settings.json")
+    sentences = [f"Речення номер {i} досить довге, щоб абзац не вмістився в нижньому блоці." for i in range(12)]
+    book = tmp_path / "довгий.txt"
+    book.write_text(" ".join(sentences) + "\n\nДругий абзац.", encoding="utf-8")
+
+    window = MainWindow(data)
+    window.resize(700, 600)
+    window.show()
+    window.open_path(book)
+    assert _wait(app, lambda: window.document is not None)
+    bar = window.current_text.verticalScrollBar()
+
+    def sentence_visible(index):
+        view = window.current_text
+        start = sum(len(s) + 1 for s in sentences[:index])
+        cursor = QTextCursor(view.document())
+        cursor.setPosition(start)
+        rect = view.cursorRect(cursor)
+        return 0 <= rect.top() and rect.bottom() <= view.viewport().height()
+
+    window.controller.seek(0, 0)
+    assert _wait(app, lambda: window._current_text_position == (0, 0))
+    assert bar.value() == 0 and bar.maximum() > 0  # the paragraph does not fit: there is a scroll bar
+    window.controller.seek(0, 11)
+    assert _wait(app, lambda: window._current_text_position == (0, 11))
+    assert bar.value() > 0 and sentence_visible(11)
+    window.controller.seek(0, 5)
+    assert _wait(app, lambda: window._current_text_position == (0, 5))
+    assert sentence_visible(5)
+    window.close()

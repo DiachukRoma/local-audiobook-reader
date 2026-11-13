@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QPointF, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter, QShortcut
+from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter, QShortcut, QTextCursor
 from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QFileDialog, QFrame, QHBoxLayout,
                                QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QProgressDialog,
                                QPushButton, QSlider, QSpinBox, QSplitter, QSplitterHandle, QStatusBar, QStyle,
@@ -877,14 +877,43 @@ class MainWindow(QMainWindow):
 
     def _render_current_text(self, paragraph: int, segment: int) -> None:
         """Show the paragraph being read in the bottom pane, with the current fragment highlighted."""
+        same_paragraph = self._current_text_position is not None and self._current_text_position[0] == paragraph
         self._current_text_position = (paragraph, segment)
+        segments = self.controller.segments(paragraph)
         rendered = []
-        for i, seg in enumerate(self.controller.segments(paragraph)):
+        for i, seg in enumerate(segments):
             text = html.escape(seg)
             rendered.append(f"<span style='background-color: rgba(255, 200, 0, 90);'>{text}</span>"
                             if i == segment else text)
+        bar = self.current_text.verticalScrollBar()
+        scroll = bar.value() if same_paragraph else 0
         size = self.settings.current_text_font_size
         self.current_text.setHtml(f"<div style='font-size: {size}px; line-height: 140%;'>{' '.join(rendered)}</div>")
+        bar.setValue(scroll)  # setHtml jumps to the top; keep the place within the paragraph
+        if 0 <= segment < len(segments):
+            start = sum(len(seg) + 1 for seg in segments[:segment])  # segments are joined by single spaces
+            self._scroll_current_text_to(start, start + len(segments[segment]))
+
+    def _scroll_current_text_to(self, start: int, end: int) -> None:
+        """Scroll the bottom pane so the sentence being read (characters start..end) is visible,
+        with a little of the preceding text above it; nothing moves while it is already in view."""
+        view = self.current_text
+        bar = view.verticalScrollBar()
+        if start <= 0:
+            bar.setValue(0)  # the first sentence: show the paragraph from its top
+            return
+        cursor = QTextCursor(view.document())
+        cursor.setPosition(min(start, view.document().characterCount() - 1))
+        top = view.cursorRect(cursor).top() + bar.value()
+        cursor.setPosition(min(end, view.document().characterCount() - 1))
+        bottom = view.cursorRect(cursor).bottom() + bar.value()
+        height = view.viewport().height()
+        if top >= bar.value() and bottom <= bar.value() + height:
+            return
+        if bottom - top <= height * 3 // 4:
+            bar.setValue(top - height // 4)  # room for context above the sentence
+        else:
+            bar.setValue(top - 8)  # a sentence taller than the pane: show its beginning
 
     def _on_state(self, state: str) -> None:
         playing = state in ("playing", "buffering")
@@ -902,6 +931,8 @@ class MainWindow(QMainWindow):
     # ========================================================= persistence
     def _remember_text_height(self, *_args) -> None:
         self.settings.current_text_height = self.text_splitter.sizes()[1]
+        if self._current_text_position is not None:  # keep the sentence in view in the resized pane
+            self._render_current_text(*self._current_text_position)
 
     def _save_settings(self) -> None:
         try:
