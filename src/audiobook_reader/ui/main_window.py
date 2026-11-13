@@ -11,7 +11,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QPointF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter, QShortcut
-from PySide6.QtWidgets import (QComboBox, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFrame, QHBoxLayout,
+from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QFileDialog, QFrame, QHBoxLayout,
                                QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QProgressDialog,
                                QPushButton, QSlider, QSpinBox, QSplitter, QSplitterHandle, QStatusBar, QStyle,
                                QTextBrowser, QToolButton, QVBoxLayout, QWidget)
@@ -29,6 +29,8 @@ from ..tts.supertonic_engine import APPROX_DOWNLOAD_MB, MODEL_REPO, SupertonicEn
 from .abbreviations_dialog import AbbreviationsDialog
 from .paragraph_view import ParagraphView
 from .search_bar import SearchBar
+from .flow_layout import FlowLayout
+from .ocr_dialog import OcrDialog
 from .settings_dialog import SettingsDialog
 from .tasks import BackgroundTask, run_background
 
@@ -260,13 +262,24 @@ class MainWindow(QMainWindow):
         self.progress_slider.setMaximum(0)
         self.progress_slider.sliderReleased.connect(lambda: self._seek(self.progress_slider.value()))
         self.position_label = QLabel("—")
-        self.position_label.setMinimumWidth(320)
+        self.position_label.setMinimumWidth(150)  # long text is clipped in a narrow window; full text in tooltip
         progress_row.addWidget(self.progress_slider, 1)
         progress_row.addWidget(self.position_label)
         root.addLayout(progress_row)
 
-        # Transport + voice controls
-        controls = QHBoxLayout()
+        # Transport + voice controls: groups that wrap onto a new line when the window is narrow
+        controls_widget = QWidget()
+        controls_flow = FlowLayout(controls_widget, h_spacing=18, v_spacing=8)
+
+        def group() -> QHBoxLayout:
+            box = QWidget()
+            layout = QHBoxLayout(box)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(6)
+            controls_flow.addWidget(box)
+            return layout
+
+        controls = group()
 
         def tool(icon, tip, slot, text=None):
             button = QToolButton()
@@ -286,8 +299,8 @@ class MainWindow(QMainWindow):
         self.play_button.setMinimumWidth(110)
         self.stop_button = tool(QStyle.SP_MediaStop, "Зупинити", self.controller.stop)
         self.next_button = tool(QStyle.SP_MediaSkipForward, "Наступне речення (⌘→)", self.controller.next_sentence)
-        controls.addSpacing(16)
 
+        controls = group()
         controls.addWidget(QLabel("Мова:"))
         self.lang_combo = QComboBox()
         self.lang_combo.addItem("Автоматично", "auto")
@@ -298,18 +311,20 @@ class MainWindow(QMainWindow):
         self.lang_combo.currentIndexChanged.connect(self._language_changed)
         controls.addWidget(self.lang_combo)
 
+        controls = group()
         controls.addWidget(QLabel("Голос:"))
         self.voice_combo = QComboBox()
         self.voice_combo.setMinimumWidth(190)
         self.voice_combo.currentIndexChanged.connect(self._voice_changed)
         controls.addWidget(self.voice_combo)
 
+        controls = group()
         controls.addWidget(QLabel("Швидкість:"))
         self.speed_slider = QSlider(Qt.Horizontal)
         self.speed_slider.setRange(int(SPEED_MIN * 100), int(SPEED_MAX * 100))
         self.speed_slider.setSingleStep(5)
         self.speed_slider.setPageStep(10)
-        self.speed_slider.setFixedWidth(170)
+        self.speed_slider.setFixedWidth(150)
         self.speed_slider.setToolTip("Швидкість читання 0,7×–3×. Найчистіше звучання — до 2×; "
                                      "на 2,5–3× мовлення дуже стиснуте.")
         self.speed_slider.setValue(int(round(self.settings.speed * 100)))
@@ -318,6 +333,8 @@ class MainWindow(QMainWindow):
         self.speed_spin.setDecimals(2)
         self.speed_spin.setSingleStep(0.05)
         self.speed_spin.setSuffix("×")
+        self.speed_spin.setMinimumSize(90, 30)  # same look as the PDF page fields
+        self.speed_spin.lineEdit().setTextMargins(8, 0, 4, 0)
         self.speed_spin.setKeyboardTracking(False)  # apply after Enter / focus out, not on every keystroke
         self.speed_spin.setToolTip(self.speed_slider.toolTip())
         self.speed_spin.setValue(self.settings.speed)
@@ -332,9 +349,9 @@ class MainWindow(QMainWindow):
         self.duration_label.setPalette(self.subtitle_label.palette())
         self.duration_label.setToolTip("Орієнтовний час прослуховування за поточної швидкості й пауз "
                                        "(з урахуванням вибраного діапазону сторінок).")
-        controls.addWidget(self.duration_label)
-        controls.addStretch(1)
-        root.addLayout(controls)
+        controls_flow.addWidget(self.duration_label)
+        self.duration_label.hide()  # shown once a document gives it a listening time
+        root.addWidget(controls_widget)
 
         self.setCentralWidget(central)
         self.setStatusBar(_PaddedStatusBar())
@@ -556,56 +573,18 @@ class MainWindow(QMainWindow):
                                 f"Рушій розпізнавання {engine_name()} недоступний у цьому середовищі. "
                                 "Виконайте scripts/setup.sh, щоб установити залежності.")
             return
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Question)
-        box.setWindowTitle("Розпізнавання тексту (OCR)")
-        if all_pages_option:
-            box.setText("Розпізнати текст у цьому PDF?")
-            box.setInformativeText(
-                f"Сторінок без текстового шару: {pages}. Можна розпізнати лише їх або всі сторінки "
-                f"(корисно, якщо вбудований текст пошкоджений).\n\n{OCR_NOTE}")
-            scans = box.addButton("Лише сторінки без тексту", QMessageBox.AcceptRole) if pages else None
-            every = box.addButton("Усі сторінки", QMessageBox.AcceptRole)
-        else:
-            box.setText(f"Цей PDF — скан без текстового шару ({pages} стор.). Розпізнати текст?")
-            box.setInformativeText(f"{OCR_NOTE}\n\nОрієнтовно {OCR_PAGE_TIME} на сторінку.")
-            scans = box.addButton("Розпізнати", QMessageBox.AcceptRole)
-            every = None
-        box.addButton("Скасувати", QMessageBox.RejectRole)
-
-        # Recognition is tuned to one language: e.g. Ukrainian has no "ё" and would read it as "е".
-        language_row = QWidget(box)
-        row = QHBoxLayout(language_row)
-        row.setContentsMargins(0, 8, 0, 0)
-        row.addWidget(QLabel("Мова тексту для розпізнавання:"))
-        language_combo = QComboBox()
-        language_combo.addItem("Українська", "uk")
-        language_combo.addItem("Русский", "ru")
-        language_combo.setCurrentIndex(max(language_combo.findData(self._default_ocr_language(path)), 0))
-        row.addWidget(language_combo)
-        row.addStretch(1)
-        # Place the selector above the buttons: move the button box one row down.
-        layout = box.layout()
-        buttons = box.findChild(QDialogButtonBox)
-        index = layout.indexOf(buttons) if buttons is not None else -1
-        if index >= 0:
-            row_at, col, _rows, cols = layout.getItemPosition(index)
-            layout.removeWidget(buttons)
-            layout.addWidget(language_row, row_at, col, 1, cols)
-            layout.addWidget(buttons, row_at + 1, col, 1, cols)
-        else:
-            layout.addWidget(language_row, layout.rowCount(), 0, 1, layout.columnCount())
-
-        box.exec()
-        clicked = box.clickedButton()
-        if clicked is None or clicked not in (scans, every):
+        current = self.document if self.document and self.document.path == path else None
+        recognized = (current.ocr_pages, self.ocr_language) if current and current.ocr_pages else None
+        dialog = OcrDialog(pages, self._default_ocr_language(path), OCR_NOTE, OCR_PAGE_TIME,
+                           recognized=recognized, recognized_mode=self.ocr_mode if recognized else None,
+                           can_all=all_pages_option, parent=self)
+        if dialog.exec() != OcrDialog.Accepted or dialog.mode is None:
             return
-        mode = "all" if clicked is every else "scans"
-        language = language_combo.currentData()
+        language = dialog.language
         self.settings.ocr_language = language
         self._save_settings()
-        rng = self.document.page_range if self.document and self.document.path == path else None
-        self.open_path(path, page_range=rng, use_saved_range=rng is None, ocr_mode=mode, ocr_language=language)
+        rng = current.page_range if current else None
+        self.open_path(path, page_range=rng, use_saved_range=rng is None, ocr_mode=dialog.mode, ocr_language=language)
 
     def _default_ocr_language(self, path: Path) -> str:
         """Language preselected in the OCR dialog: the one this document was recognized in,
@@ -731,6 +710,7 @@ class MainWindow(QMainWindow):
         self.progress_slider.setMaximum(0)
         self.position_label.setText("—")
         self.duration_label.clear()
+        self.duration_label.hide()
         self.pdf_row.hide()
         self._update_auto_language_label()
         self._apply_voice_settings()
@@ -822,6 +802,7 @@ class MainWindow(QMainWindow):
         estimate = self._reading_time
         if estimate is None or not estimate.paragraphs:
             self.duration_label.clear()
+            self.duration_label.hide()
             return
         if paragraph is None:
             paragraph = self.controller.position[0]
@@ -832,6 +813,7 @@ class MainWindow(QMainWindow):
         if paragraph > 0:
             text += f" · залишилось ≈ {format_duration(estimate.seconds(speed, *pauses, start=paragraph))}"
         self.duration_label.setText(text)
+        self.duration_label.show()
 
     def _sync_speed_spin(self, value: int) -> None:
         if int(round(self.speed_spin.value() * 100)) != value:
@@ -889,6 +871,7 @@ class MainWindow(QMainWindow):
             self.sections_list.setCurrentRow(section_index)
             self.sections_list.blockSignals(False)
         self.position_label.setText(" · ".join(parts))
+        self.position_label.setToolTip(self.position_label.text())
         self._render_current_text(paragraph, segment)
         self._save_progress()
 

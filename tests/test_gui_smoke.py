@@ -125,6 +125,7 @@ def test_scanned_pdf_ocr_flow(app, tmp_path, monkeypatch, uk_paragraphs):
     scan = make_scanned_pdf(make_pdf(tmp_path / "t.pdf", [uk_paragraphs, uk_paragraphs]), tmp_path / "scan.pdf")
 
     offered = []
+    offer_ocr = mw.MainWindow._offer_ocr
     monkeypatch.setattr(mw.MainWindow, "_offer_ocr", lambda self, path, pages, all_pages_option=False:
                         offered.append(pages))
     window = mw.MainWindow(data)
@@ -145,6 +146,25 @@ def test_scanned_pdf_ocr_flow(app, tmp_path, monkeypatch, uk_paragraphs):
     reopened.open_path(scan)  # OCR mode and position are remembered; text comes from the OCR cache
     assert _wait(app, lambda: reopened.document is not None)
     assert reopened.document.ocr_pages == 2 and reopened.controller.position == (3, 0)
+    assert reopened.ocr_language == "uk"
+
+    # File -> OCR on a recognized book: the dialog offers re-recognition in another language.
+    seen = {}
+
+    def pick_russian(dialog):
+        seen["buttons"] = list(dialog.action_buttons)
+        seen["preselected"] = dialog.language
+        dialog.language_combo.setCurrentIndex(dialog.language_combo.findData("ru"))
+        dialog.action_buttons["scans"].click()
+        return dialog.result()
+
+    monkeypatch.setattr(mw.MainWindow, "_offer_ocr", offer_ocr)
+    monkeypatch.setattr(mw.OcrDialog, "exec", pick_russian)
+    reopened.ocr_current_document()
+    assert seen == {"buttons": ["scans"], "preselected": "uk"}
+    assert _wait(app, lambda: reopened.ocr_language == "ru" and not reopened._loading, timeout=120)
+    assert reopened.settings.ocr_language == "ru"
+    assert "мова: Русский" in reopened.status_label.text()
     assert list((data / "ocr-cache").glob("*.json"))
     reopened._clear_ocr_cache()
     assert not list((data / "ocr-cache").glob("*.json"))
